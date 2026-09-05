@@ -1,19 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { useImaginaria } from "@/components/chat/useImaginaria";
 import { usePaleta } from "@/components/palette";
 import { BrandMark } from "@/components/BrandMark";
-
-const SUGGESTIONS = [
-  "Tengo otra app de hábitos y no sé en qué se diferencia",
-  "Necesito un nombre que no suene a startup de 2015",
-  "Mi landing convierte fatal y no sé por qué",
-  "Llévame la contraria en algo que doy por hecho",
-];
+import {
+  getClientSuggestions,
+  getServerSuggestions,
+  subscribeSuggestions,
+} from "@/lib/suggestions";
 
 interface ChatContainerProps {
   className?: string;
@@ -192,6 +196,19 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
 /* -------------------------------------------------------------------------- */
 
 function EmptyState({ onPick }: { onPick: (value: string) => void }) {
+  // Cuatro de una lista larga, sorteadas en cada carga de la página.
+  //
+  // useSyncExternalStore y no un efecto: el servidor necesita un HTML
+  // determinista para que la hidratación no falle, y este hook está pensado
+  // justo para eso. Da la muestra fija al renderizar en servidor y cambia a la
+  // sorteada en cuanto hidrata, sin setState dentro de un efecto ni el render
+  // en cascada que eso arrastra.
+  const suggestions = useSyncExternalStore(
+    subscribeSuggestions,
+    getClientSuggestions,
+    getServerSuggestions,
+  );
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 14 }}
@@ -210,7 +227,7 @@ function EmptyState({ onPick }: { onPick: (value: string) => void }) {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {SUGGESTIONS.map((suggestion, index) => (
+        {suggestions.map((suggestion, index) => (
           <motion.button
             key={suggestion}
             type="button"
