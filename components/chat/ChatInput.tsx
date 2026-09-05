@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import type { ChatStatus } from "@/components/chat/useImaginaria";
 
@@ -40,6 +40,18 @@ export function ChatInput({
     node.style.height = "auto";
     node.style.height = Math.min(node.scrollHeight, MAX_TEXTAREA_HEIGHT) + "px";
   }, [value]);
+
+  // Devolver el foco al terminar la respuesta. Sin esto, quien envia pulsando
+  // el boton se queda con el foco EN el boton: lee la respuesta, empieza a
+  // escribir y no aparece nada. Es la forma mas sigilosa de que un chat
+  // parezca roto.
+  const wasStreaming = useRef(false);
+  useEffect(() => {
+    if (wasStreaming.current && !isStreaming) {
+      textareaRef.current?.focus();
+    }
+    wasStreaming.current = isStreaming;
+  }, [isStreaming]);
 
   const submit = () => {
     if (!value.trim() || isStreaming) return;

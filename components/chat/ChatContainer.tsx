@@ -183,8 +183,9 @@ function EmptyState({ onPick }: { onPick: (value: string) => void }) {
           Dime en qué estás atascado.
         </h2>
         <p className="max-w-md text-[0.9375rem] leading-relaxed text-im-muted">
-          No voy a darte la respuesta obvia: eso ya lo has pensado tú. Voy a
-          buscar la premisa que estás dando por buena sin darte cuenta.
+          Le damos vueltas juntos hasta que salga algo. Yo aporto, discuto y
+          empujo; tú decides. Frases cortas y muchos turnos, como quien piensa
+          en voz alta con un colega.
         </p>
       </div>
 
