@@ -84,12 +84,57 @@ async function* readSse(
   }
 }
 
-async function assertOk(response: Response, vendor: string): Promise<void> {
-  if (response.ok && response.body) return;
-  const detail = await response.text().catch(() => "");
+/** Fallos transitorios del proveedor: saturacion, cuota momentanea, 5xx. */
+const RETRIABLE = new Set([429, 500, 502, 503, 504]);
+
+const MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS ?? 3);
+
+/**
+ * Lanza la peticion reintentando los fallos transitorios.
+ *
+ * Solo es seguro reintentar AQUI, antes de haber emitido el primer token: una
+ * vez que el cliente esta leyendo texto, repetir la llamada duplicaria la
+ * respuesta. Por eso el reintento vive en la apertura del stream y no en el
+ * bucle de lectura.
+ *
+ * Los modelos punteros devuelven 503 "high demand" con bastante frecuencia;
+ * sin esto, un pico de demanda le llega al usuario como un chat roto.
+ */
+async function openStream(
+  url: string,
+  init: RequestInit,
+  vendor: string,
+): Promise<Response> {
+  let lastDetail = "";
+  let lastStatus = 0;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const response = await fetch(url, init);
+    if (response.ok && response.body) return response;
+
+    lastStatus = response.status;
+    lastDetail = await response.text().catch(() => "");
+
+    const isLastAttempt = attempt === MAX_ATTEMPTS;
+    if (!RETRIABLE.has(response.status) || isLastAttempt) break;
+
+    // Respetamos Retry-After si el proveedor lo indica; si no, backoff
+    // exponencial con jitter para no sincronizar reintentos entre instancias.
+    // Number(null) es 0, de ahi el > 0: sin el, una cabecera ausente se
+    // interpretaria como "espera 0 ms" y anularia el backoff.
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const delay =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1_000
+        : 400 * 2 ** (attempt - 1) + Math.random() * 250;
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    if (init.signal?.aborted) break;
+  }
+
   throw new ProviderError(
-    vendor + " respondio " + response.status + ": " + detail.slice(0, 500),
-    response.status,
+    vendor + " respondio " + lastStatus + ": " + lastDetail.slice(0, 500),
+    lastStatus,
     vendor,
   );
 }
@@ -107,6 +152,8 @@ interface GeminiStreamChunk {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
     totalTokenCount?: number;
+    /** Tokens de razonamiento interno. Se facturan y NO se emiten como texto. */
+    thoughtsTokenCount?: number;
   };
 }
 
@@ -117,6 +164,16 @@ class GeminiProvider implements ChatProvider {
     private readonly apiKey: string,
     readonly model: string,
     readonly parameters: Record<string, number>,
+    /**
+     * Nivel de razonamiento previo a la respuesta: "low" | "high", o null para
+     * no enviar el campo y dejar el valor por defecto del modelo.
+     *
+     * OJO: los modelos Gemini 3.x usan thinkingLevel; los de la generacion 2.5
+     * usaban thinkingConfig.thinkingBudget (un numero de tokens) y devuelven
+     * 400 "invalid argument" si les llega thinkingLevel, y viceversa. Si
+     * apuntas a un modelo 2.5, pon GEMINI_THINKING_LEVEL=default y ajusta aqui.
+     */
+    private readonly thinkingLevel: string | null = "low",
   ) {}
 
   async *stream({
@@ -129,7 +186,7 @@ class GeminiProvider implements ChatProvider {
       this.model +
       ":streamGenerateContent?alt=sse";
 
-    const response = await fetch(url, {
+    const response = await openStream(url, {
       method: "POST",
       signal,
       headers: {
@@ -149,17 +206,16 @@ class GeminiProvider implements ChatProvider {
           temperature: this.parameters.temperature,
           topP: this.parameters.topP,
           maxOutputTokens: this.parameters.maxOutputTokens,
-          // Decision consciente: con thinkingBudget 0 el primer token llega en
-          // cientos de milisegundos en lugar de varios segundos. En un chat de
-          // portfolio la latencia percibida pesa mas que el ultimo punto de
-          // calidad de razonamiento. Subelo via GEMINI_THINKING_BUDGET si
-          // prefieres priorizar profundidad.
-          thinkingConfig: { thinkingBudget: this.parameters.thinkingBudget },
+          // Decision consciente: con "low" el primer token llega antes. En un
+          // chat de portfolio la latencia percibida pesa mas que el ultimo
+          // punto de calidad de razonamiento. Sube a "high" con
+          // GEMINI_THINKING_LEVEL si prefieres priorizar profundidad.
+          ...(this.thinkingLevel
+            ? { thinkingConfig: { thinkingLevel: this.thinkingLevel } }
+            : {}),
         },
       }),
-    });
-
-    await assertOk(response, this.vendor);
+    }, this.vendor);
 
     for await (const payload of readSse(response.body!)) {
       if (!payload || payload === "[DONE]") continue;
@@ -176,9 +232,14 @@ class GeminiProvider implements ChatProvider {
         ?.map((part) => part.text ?? "")
         .join("");
 
+      // Los tokens de razonamiento se facturan como salida aunque nunca se
+      // vean. Si solo contamos candidatesTokenCount, Langfuse infravalora el
+      // coste real -en una peticion tipica, casi a la mitad-.
       const usage: TokenUsage | undefined = parsed.usageMetadata && {
         input: parsed.usageMetadata.promptTokenCount,
-        output: parsed.usageMetadata.candidatesTokenCount,
+        output:
+          (parsed.usageMetadata.candidatesTokenCount ?? 0) +
+          (parsed.usageMetadata.thoughtsTokenCount ?? 0),
         total: parsed.usageMetadata.totalTokenCount,
       };
 
@@ -225,7 +286,7 @@ class GroqProvider implements ChatProvider {
     messages,
     signal,
   }: StreamChatParams): AsyncGenerator<ProviderChunk> {
-    const response = await fetch(
+    const response = await openStream(
       this.baseUrl.replace(/\/$/, "") + "/chat/completions",
       {
         method: "POST",
@@ -252,9 +313,8 @@ class GroqProvider implements ChatProvider {
           ],
         }),
       },
+      this.vendor,
     );
-
-    await assertOk(response, this.vendor);
 
     for await (const payload of readSse(response.body!)) {
       if (!payload || payload === "[DONE]") continue;
@@ -301,7 +361,10 @@ export function resolveProvider(): ChatProvider {
   const shared = {
     temperature: num(process.env.AI_TEMPERATURE, 1),
     topP: num(process.env.AI_TOP_P, 0.95),
-    maxOutputTokens: num(process.env.AI_MAX_OUTPUT_TOKENS, 1200),
+    // Holgado a proposito: en los modelos con razonamiento, los tokens de
+    // pensamiento se descuentan de este mismo presupuesto. Con 1200 el modelo
+    // gastaba ~900 pensando y la respuesta visible se cortaba a media frase.
+    maxOutputTokens: num(process.env.AI_MAX_OUTPUT_TOKENS, 4000),
   };
 
   if (vendor === "groq") {
@@ -326,10 +389,13 @@ export function resolveProvider(): ChatProvider {
         "Falta GOOGLE_AI_API_KEY. Añádela a .env.local (ver .env.example).",
       );
     }
+    // "default" (o vacio) omite el campo y deja decidir al modelo.
+    const level = process.env.GEMINI_THINKING_LEVEL ?? "low";
     return new GeminiProvider(
       apiKey,
-      process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
-      { ...shared, thinkingBudget: num(process.env.GEMINI_THINKING_BUDGET, 0) },
+      process.env.GEMINI_MODEL ?? "gemini-3.7-flash",
+      shared,
+      level === "default" || level === "" ? null : level,
     );
   }
 
