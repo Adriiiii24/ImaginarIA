@@ -25,7 +25,7 @@ export function ChatInput({
   onSend,
   onStop,
   status,
-  placeholder = "Lanza una idea o un bloqueo...",
+  placeholder = "Suéltalo como te salga...",
   autoFocus,
 }: ChatInputProps) {
   const [value, setValue] = useState("");

@@ -88,7 +88,7 @@ export function useImaginaria(initialMessages: ChatMessage[] = []) {
             .json()
             .then((body) => body?.error?.message as string | undefined)
             .catch(() => undefined);
-          throw new Error(detail ?? "No se ha podido contactar con ImaginarIA.");
+          throw new Error(detail ?? "No consigo conectarme. Prueba otra vez en un momento.");
         }
 
         const reader = response.body.getReader();
@@ -131,7 +131,7 @@ export function useImaginaria(initialMessages: ChatMessage[] = []) {
         }
 
         const message =
-          caught instanceof Error ? caught.message : "Error inesperado.";
+          caught instanceof Error ? caught.message : "Algo ha ido mal por mi lado. Vuelve a intentarlo.";
         setError(message);
         setStatus("error");
 

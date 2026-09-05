@@ -9,10 +9,10 @@ import { usePaleta } from "@/components/palette";
 import { BrandMark } from "@/components/BrandMark";
 
 const SUGGESTIONS = [
-  "Tengo una app de hábitos más y no sé en qué se diferencia",
+  "Tengo otra app de hábitos y no sé en qué se diferencia",
   "Necesito un nombre que no suene a startup de 2015",
   "Mi landing convierte fatal y no sé por qué",
-  "Rómpeme esta premisa: la gente quiere más funcionalidades",
+  "Llévame la contraria en algo que doy por hecho",
 ];
 
 interface ChatContainerProps {
@@ -87,7 +87,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
               onClick={reset}
               className="rounded-full px-3 py-1 text-xs text-im-faint transition-colors hover:text-im-text"
             >
-              Nueva sesión
+              Empezar de cero
             </button>
           )}
 
@@ -201,12 +201,11 @@ function EmptyState({ onPick }: { onPick: (value: string) => void }) {
     >
       <div className="space-y-3">
         <h2 className="text-2xl font-semibold leading-snug tracking-tight text-im-text">
-          Dime en qué estás atascado.
+          ¿Qué te ronda la cabeza?
         </h2>
         <p className="max-w-md text-[0.9375rem] leading-relaxed text-im-muted">
-          Le damos vueltas juntos hasta que salga algo. Yo aporto, discuto y
-          empujo; tú decides. Frases cortas y muchos turnos, como quien piensa
-          en voz alta con un colega.
+          Cuéntamelo como te salga y le damos vueltas juntos. Te llevaré la
+          contraria alguna vez, pero siempre a favor de la idea.
         </p>
       </div>
 

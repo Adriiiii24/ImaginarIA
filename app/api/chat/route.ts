@@ -181,7 +181,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!limit.ok) {
     return errorResponse(
       "rate_limited",
-      "Demasiadas peticiones. Reinténtalo en " + limit.retryAfter + " segundos.",
+      "Vas muy rápido para mí. Dame " + limit.retryAfter + " segundos.",
       429,
       { "Retry-After": String(limit.retryAfter) },
     );
@@ -351,8 +351,8 @@ export async function POST(request: NextRequest): Promise<Response> {
               // No filtramos el detalle del proveedor al cliente: puede
               // contener trazas internas. Queda en los logs del servidor.
               message: quotaExhausted
-                ? "Se ha agotado la cuota del modelo. Espera un minuto y vuelve a intentarlo."
-                : "El modelo ha fallado a mitad de respuesta. Reinténtalo en unos segundos.",
+                ? "Me he quedado sin cupo por ahora. Dame un minuto y seguimos."
+                : "Se me ha cortado a mitad de frase. Prueba otra vez en unos segundos.",
             }),
           );
         }
