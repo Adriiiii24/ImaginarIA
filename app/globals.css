@@ -1,0 +1,199 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   ImaginarIA — sistema de diseno
+   --------------------------------------------------------------------------
+   Todo el aspecto visual se controla desde estas variables CSS nativas. El
+   portfolio que embeba el widget puede reescribir cualquiera de ellas -sobre
+   :root o sobre el contenedor del panel- y la aplicacion entera se retematiza
+   sin tocar ni una clase de Tailwind.
+
+   El prefijo --im- evita colisiones con las variables del sitio anfitrion.
+   ========================================================================== */
+
+:root {
+  /* Superficies */
+  --im-bg: #09090e;
+  --im-surface: #121218;
+  --im-surface-raised: #1a1a24;
+  --im-border: #26262f;
+  --im-border-strong: #363644;
+
+  /* Texto */
+  --im-text: #ededf2;
+  --im-text-muted: #8d8d9d;
+  --im-text-faint: #5a5a68;
+
+  /* Acento */
+  --im-accent: #8b5cf6;
+  --im-accent-bright: #a78bfa;
+  --im-accent-ink: #ffffff;
+  --im-accent-wash: rgb(139 92 246 / 0.12);
+  --im-accent-glow: rgb(139 92 246 / 0.28);
+
+  /* Estados */
+  --im-danger: #f87171;
+
+  /* Geometria */
+  --im-radius: 1rem;
+  --im-radius-sm: 0.625rem;
+  --im-radius-lg: 1.5rem;
+
+  /* Movimiento — un unico sitio donde ajustar el ritmo de la interfaz */
+  --im-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Mapeo de las variables a utilidades de Tailwind v4 (bg-im-surface,
+   text-im-muted, border-im-border, rounded-im...). 'inline' hace que Tailwind
+   emita var(--im-*) en lugar de copiar el valor, que es justo lo que permite
+   sobreescribirlo en caliente desde fuera. */
+@theme inline {
+  --color-im-bg: var(--im-bg);
+  --color-im-surface: var(--im-surface);
+  --color-im-raised: var(--im-surface-raised);
+  --color-im-border: var(--im-border);
+  --color-im-border-strong: var(--im-border-strong);
+  --color-im-text: var(--im-text);
+  --color-im-muted: var(--im-text-muted);
+  --color-im-faint: var(--im-text-faint);
+  --color-im-accent: var(--im-accent);
+  --color-im-accent-bright: var(--im-accent-bright);
+  --color-im-accent-ink: var(--im-accent-ink);
+  --color-im-accent-wash: var(--im-accent-wash);
+  --color-im-danger: var(--im-danger);
+
+  --radius-im: var(--im-radius);
+  --radius-im-sm: var(--im-radius-sm);
+  --radius-im-lg: var(--im-radius-lg);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--im-bg);
+  color: var(--im-text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Barra de scroll discreta: la del sistema rompe la estetica del panel. */
+.im-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--im-border-strong) transparent;
+}
+.im-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.im-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--im-border-strong);
+  border-radius: 9999px;
+}
+.im-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Cursor de escritura durante el streaming. */
+@keyframes im-caret {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  95% {
+    opacity: 0.15;
+  }
+}
+.im-caret {
+  display: inline-block;
+  width: 0.5ch;
+  margin-left: 0.1ch;
+  background: var(--im-accent-bright);
+  animation: im-caret 1.1s steps(1, end) infinite;
+  vertical-align: text-bottom;
+}
+
+/* Halo ambiental del fondo. Puramente decorativo. */
+.im-aurora::before {
+  content: "";
+  position: absolute;
+  inset: -40% -20% auto;
+  height: 60%;
+  background: radial-gradient(
+    60% 60% at 50% 0%,
+    var(--im-accent-glow) 0%,
+    transparent 70%
+  );
+  filter: blur(60px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Tipografia del mensaje del asistente. Deliberadamente sobria: el prompt
+   restringe el formato a prosa, negritas y listas cortas. */
+.im-prose {
+  line-height: 1.7;
+}
+.im-prose > * + * {
+  margin-top: 0.85em;
+}
+.im-prose strong {
+  color: var(--im-accent-bright);
+  font-weight: 600;
+}
+.im-prose ul,
+.im-prose ol {
+  padding-left: 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.im-prose ul {
+  list-style: disc;
+}
+.im-prose ol {
+  list-style: decimal;
+}
+.im-prose li::marker {
+  color: var(--im-accent);
+}
+.im-prose a {
+  color: var(--im-accent-bright);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.im-prose code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.875em;
+  background: var(--im-accent-wash);
+  border-radius: 0.35rem;
+  padding: 0.1em 0.35em;
+}
+.im-prose pre {
+  background: var(--im-bg);
+  border: 1px solid var(--im-border);
+  border-radius: var(--im-radius-sm);
+  padding: 0.9rem;
+  overflow-x: auto;
+}
+.im-prose pre code {
+  background: none;
+  padding: 0;
+}
+.im-prose blockquote {
+  border-left: 2px solid var(--im-accent);
+  padding-left: 0.9rem;
+  color: var(--im-text-muted);
+}
+
+/* Respeta a quien tenga reducido el movimiento en el sistema operativo.
+   Framer Motion lo detecta por su cuenta, pero las animaciones CSS no. */
+@media (prefers-reduced-motion: reduce) {
+  .im-caret {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}
