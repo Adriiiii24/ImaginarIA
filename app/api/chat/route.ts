@@ -7,8 +7,8 @@ import {
 } from "@/lib/ai/provider";
 import { buildSystemPrompt } from "@/lib/ai/system-prompt";
 import {
-  fetchManagedSystemPrompt,
   getObservability,
+  resolveSystemPrompt,
 } from "@/lib/observability/langfuse";
 import type {
   ChatRequestBody,
@@ -210,10 +210,11 @@ export async function POST(request: NextRequest): Promise<Response> {
     throw error;
   }
 
-  // Prompt Management de Langfuse con el prompt local como red de seguridad.
-  // Si Langfuse esta desactivado o falla, devuelve null y seguimos igual.
-  const managedPrompt = await fetchManagedSystemPrompt();
-  const systemPrompt = buildSystemPrompt(managedPrompt);
+  // Langfuse manda sobre el prompt; el del repositorio es la red de
+  // seguridad. resolveSystemPrompt no lanza nunca: ante cualquier problema
+  // devuelve el local y la conversacion sigue.
+  const prompt = await resolveSystemPrompt();
+  const systemPrompt = buildSystemPrompt(prompt.text);
 
   const observability = await getObservability();
   const primary = chain[0];
@@ -224,6 +225,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     vendor: primary.vendor,
     model: primary.model,
     parameters: primary.parameters,
+    prompt,
   });
 
   // Cortamos la llamada al proveedor si el cliente cierra la pestana: sin

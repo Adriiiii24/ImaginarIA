@@ -287,17 +287,42 @@ Tres detalles de la implementación que evitan los fallos habituales:
 - **`sessionId`.** El cliente genera uno por conversación, así los turnos se
   agrupan en el dashboard en lugar de aparecer sueltos.
 
-### Prompt Management
+### Prompt Management: Langfuse manda, el repositorio es la red
 
-El prompt vive en `lib/ai/system-prompt.ts` y su versión (`SYSTEM_PROMPT_VERSION`)
-viaja en cada traza, de modo que una caída de calidad en producción se puede
-atribuir a una versión concreta.
+El system prompt real vive en Langfuse, bajo el nombre `imaginaria-system` y la
+etiqueta `production`. La aplicación lo pide en cada petición (con caché de 60s)
+y lo usa tal cual. El de [lib/ai/system-prompt.ts](lib/ai/system-prompt.ts) solo
+entra si Langfuse no está configurado, no responde a tiempo o no encuentra esa
+etiqueta.
 
-Si además creas en Langfuse un prompt de texto llamado `imaginaria-system` con
-la etiqueta `production`, `fetchManagedSystemPrompt()` lo servirá y podrás
-iterarlo sin redesplegar. Si no existe, falla o Langfuse está caído, se usa el
-prompt local. Empieza siempre por el prompt en código: el repositorio sigue
-siendo la referencia auditable.
+Activarlo son dos cosas:
+
+```bash
+npm run prompt:publish          # publica el prompt del repo como versión nueva
+# y en .env:
+LANGFUSE_PROMPT_LABEL=production
+```
+
+Sin `LANGFUSE_PROMPT_LABEL` no se consulta siquiera: el SDK escribe su propio
+"Prompt not found" en cada petición aunque capturemos el error, y ese ruido
+acaba tapando los fallos que importan.
+
+**Cada traza registra de dónde salió el prompt.** En los metadatos verás
+`promptSource: "langfuse" | "local"` y `promptVersion` (`lf-3` para la versión 3
+de Langfuse, `2.0.0` para la del repositorio). Si un día la calidad cae, lo
+primero que quieres saber es qué texto estaba leyendo el modelo. Además, la
+generación se enlaza con la versión exacta del prompt, que es lo que habilita
+las métricas por versión de Langfuse: latencia, coste y puntuaciones agregadas
+por cada iteración.
+
+**Dos formas de iterar, y conviene elegir una:**
+
+- *Desde el repositorio* — editas `system-prompt.ts`, subes
+  `SYSTEM_PROMPT_VERSION`, commiteas y lanzas `npm run prompt:publish`. El
+  cambio queda revisado y en el historial de git.
+- *Desde la interfaz de Langfuse* — cambias el texto y publicas. Está en
+  producción en menos de un minuto, sin desplegar. A cambio, el repositorio
+  deja de reflejar lo que corre de verdad: tráete el cambio de vuelta.
 
 ---
 

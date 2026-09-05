@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "prompt:publish": "node scripts/publish-prompt.mjs"
   },
   "dependencies": {
     "framer-motion": "^13.2.0",

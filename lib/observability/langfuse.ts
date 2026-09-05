@@ -1,4 +1,8 @@
-import type { Langfuse, LangfuseGenerationClient } from "langfuse";
+import type {
+  Langfuse,
+  LangfuseGenerationClient,
+  LangfusePromptClient,
+} from "langfuse";
 import type { TokenUsage } from "@/lib/ai/types";
 import {
   IMAGINARIA_SYSTEM_PROMPT,
@@ -57,6 +61,8 @@ export interface Observability {
     vendor: string;
     model: string;
     parameters: Record<string, string | number | boolean>;
+    /** Prompt que se ha usado, para enlazar la generacion con su version. */
+    prompt: ResolvedPrompt;
   }): GenerationHandle;
   /** Vacia la cola de eventos. Llamar SIEMPRE antes de cerrar el stream. */
   flush(): Promise<void>;
@@ -137,7 +143,8 @@ export async function getObservability(): Promise<Observability> {
           input: lastUserMessage,
           tags: ["imaginaria", input.vendor],
           metadata: {
-            promptVersion: SYSTEM_PROMPT_VERSION,
+            promptVersion: input.prompt.version,
+            promptSource: input.prompt.source,
             turns: input.messages.length,
           },
         });
@@ -146,6 +153,12 @@ export async function getObservability(): Promise<Observability> {
           name: "creative-completion",
           model: input.model,
           modelParameters: input.parameters,
+          // Enlaza la generacion con la version exacta del prompt en Langfuse.
+          // Es lo que habilita sus metricas por version: latencia, coste y
+          // puntuaciones agregadas por cada iteracion del prompt. Solo se
+          // enlaza el prompt gestionado; el de respaldo no existe en Langfuse
+          // y enlazarlo falsearia esas metricas.
+          ...(input.prompt.client ? { prompt: input.prompt.client } : {}),
           // Enviamos el prompt de sistema como parte del input para que la
           // comparacion entre versiones del prompt sea posible en la UI.
           input: [
@@ -154,7 +167,8 @@ export async function getObservability(): Promise<Observability> {
           ],
           metadata: {
             promptName: SYSTEM_PROMPT_NAME,
-            promptVersion: SYSTEM_PROMPT_VERSION,
+            promptVersion: input.prompt.version,
+            promptSource: input.prompt.source,
           },
         });
 
@@ -225,38 +239,79 @@ export async function getObservability(): Promise<Observability> {
 }
 
 /**
- * Prompt Management: recupera el system prompt publicado en Langfuse para
- * poder iterarlo sin redespliegue, con el prompt local como red de seguridad.
+ * De donde ha salido el system prompt de esta peticion.
  *
- * Devuelve null si Langfuse esta desactivado o el prompt no existe todavia;
- * el llamante usa entonces IMAGINARIA_SYSTEM_PROMPT. Empieza SIEMPRE con el
- * prompt en codigo y adopta Prompt Management cuando quieras iterar en
- * caliente: asi el repositorio sigue siendo la referencia auditable.
- *
- * Esta DESACTIVADO salvo que pongas LANGFUSE_PROMPT_LABEL. Motivo: si el
- * prompt no existe en Langfuse, el SDK escribe su propio "Prompt not found"
- * en consola en cada peticion aunque nosotros capturemos el error, y ese
- * ruido acaba tapando los fallos que si importan. Crea el prompt
- * "imaginaria-system" en Langfuse y define la etiqueta para activarlo.
+ * Se traza en cada generacion. Si un dia la calidad cae, lo primero que
+ * quieres saber es si el modelo estaba leyendo la version publicada en
+ * Langfuse o el respaldo del repositorio.
  */
-export async function fetchManagedSystemPrompt(): Promise<string | null> {
-  if (!process.env.LANGFUSE_PROMPT_LABEL) return null;
+export interface ResolvedPrompt {
+  /** Texto del prompt, venga de donde venga. */
+  text: string;
+  /** "langfuse" si lo sirvio Prompt Management; "local" si es el del repo. */
+  source: "langfuse" | "local";
+  /** Version de Langfuse ("lf-3") o la constante del repo ("2.0.0"). */
+  version: string;
+  /**
+   * Cliente de Langfuse, solo cuando el prompt viene de alli. Se pasa a la
+   * generacion para enlazarla con esa version exacta.
+   */
+  client?: LangfusePromptClient;
+}
+
+const LOCAL_PROMPT: ResolvedPrompt = {
+  text: IMAGINARIA_SYSTEM_PROMPT,
+  source: "local",
+  version: SYSTEM_PROMPT_VERSION,
+};
+
+/**
+ * Resuelve el system prompt: Langfuse manda, el repositorio es la red.
+ *
+ * Prompt Management deja iterar el prompt en produccion sin redesplegar. El
+ * riesgo evidente es quedarte sin chat si Langfuse falla, y por eso NUNCA se
+ * propaga un error desde aqui: ante cualquier problema -sin credenciales, sin
+ * red, prompt inexistente- se devuelve el del repositorio y la conversacion
+ * sigue.
+ *
+ * Solo se consulta si LANGFUSE_PROMPT_LABEL tiene valor. Sin el, ni se
+ * intenta: el SDK escribe su propio "Prompt not found" en cada peticion
+ * aunque capturemos el error, y ese ruido acaba tapando los fallos reales.
+ */
+export async function resolveSystemPrompt(): Promise<ResolvedPrompt> {
+  const label = process.env.LANGFUSE_PROMPT_LABEL;
+  if (!label) return LOCAL_PROMPT;
 
   const client = await getClient();
-  if (!client) return null;
+  if (!client) return LOCAL_PROMPT;
 
   try {
     const prompt = await client.getPrompt(SYSTEM_PROMPT_NAME, undefined, {
-      label: process.env.LANGFUSE_PROMPT_LABEL,
-      // El cache en memoria evita una llamada de red por mensaje; a los 60s
-      // se refresca en segundo plano sin bloquear la peticion en curso.
+      label,
+      // Cache en memoria: evita una llamada de red por mensaje. Pasados los
+      // 60s se refresca en segundo plano, sin bloquear la peticion en curso,
+      // asi que publicar una version nueva tarda como mucho un minuto en
+      // verse en produccion.
       cacheTtlSeconds: 60,
+      // Si Langfuse no contesta a tiempo, este texto se usa igualmente y el
+      // cliente vuelve marcado como isFallback.
       fallback: IMAGINARIA_SYSTEM_PROMPT,
       fetchTimeoutMs: 1500,
     });
-    return prompt.prompt;
+
+    // isFallback significa que el SDK devolvio nuestro texto local envuelto en
+    // un cliente, no la version publicada. Enlazarlo a la generacion
+    // ensuciaria las metricas por version de Langfuse con datos falsos.
+    if (prompt.isFallback) return LOCAL_PROMPT;
+
+    return {
+      text: prompt.prompt,
+      source: "langfuse",
+      version: "lf-" + prompt.version,
+      client: prompt,
+    };
   } catch (error) {
-    console.warn("[langfuse] getPrompt fallido, usando prompt local", error);
-    return null;
+    console.warn("[langfuse] getPrompt fallido, usando el prompt del repositorio", error);
+    return LOCAL_PROMPT;
   }
 }
