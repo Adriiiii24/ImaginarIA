@@ -6,7 +6,7 @@ import { ChatInput } from "@/components/chat/ChatInput";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { useImaginaria } from "@/components/chat/useImaginaria";
 import { usePaleta } from "@/components/palette";
-import Image from "next/image";
+import { BrandMark } from "@/components/BrandMark";
 
 const SUGGESTIONS = [
   "Tengo una app de hábitos más y no sé en qué se diferencia",
@@ -74,14 +74,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
       {/* Cabecera */}
       <header className="z-10 flex shrink-0 items-center justify-between border-b border-im-border px-5 py-3.5">
         <div className="flex items-center gap-2.5">
-          <Image
-            src="/logo.png"
-            alt=""
-            width={22}
-            height={22}
-            priority
-            className="rounded-md"
-          />
+          <BrandMark />
           <h1 className="text-sm font-semibold tracking-tight text-im-text">
             Imaginar<span className="text-im-accent">IA</span>
           </h1>
