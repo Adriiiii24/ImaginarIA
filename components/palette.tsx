@@ -12,36 +12,52 @@ import {
 /**
  * Rotación de la paleta.
  *
- * Hay cinco colores y cinco huecos: el fondo y las cuatro figuras. Cada
- * pulsación gira la asignación, así que siempre están los cinco colores en
- * juego y nunca se repite ninguno.
+ * El azul del fondo VIAJA de figura en figura. En cada pulsación:
  *
- * El salto es de dos posiciones y no de una. Con cinco colores, 2 y 5 son
- * primos entre sí, de modo que el fondo recorre los cinco antes de repetirse
- * -igual que con un salto de uno-, pero el recorrido empieza por magenta y
- * sigue por verde, que es la secuencia pedida.
+ *   - el fondo toma el color de la figura que toca,
+ *   - esa figura se queda con el azul,
+ *   - y las demás mantienen su color de siempre.
+ *
+ * Así solo cambia una figura por pulsación (la que recibe el azul), y la que
+ * lo tenía antes vuelve a su color. A la quinta se cierra el ciclo y todo
+ * regresa al reparto inicial.
+ *
+ *   inicio    fondo azul     · círculo coral · triángulo magenta
+ *                            · cuadrado amarillo · rombo verde
+ *   paso 1    fondo magenta  · triángulo AZUL
+ *   paso 2    fondo verde    · rombo AZUL       (el triángulo vuelve a magenta)
+ *   paso 3    fondo amarillo · cuadrado AZUL
+ *   paso 4    fondo coral    · círculo AZUL
+ *   paso 5    vuelta al inicio
  */
-const PALETA = [
-  "#0007ff", // azul    — fondo inicial
-  "#fd5959", // coral   — círculo
-  "#e26af5", // magenta — triángulo
-  "#f4de5e", // amarillo — cuadrado
-  "#88f95d", // verde   — rombo
+
+const AZUL = "#0007ff";
+
+/** Color propio de cada figura, por posición. */
+const BASE = [
+  "#fd5959", // 1 · círculo,   arriba izquierda
+  "#e26af5", // 2 · triángulo, arriba derecha
+  "#f4de5e", // 3 · cuadrado,  abajo izquierda
+  "#88f95d", // 4 · rombo,     abajo derecha
 ] as const;
 
-/** Orden de los huecos. El índice 0 es el fondo; el resto, las figuras. */
-const HUECOS = [
-  "--im-bg",
-  "--im-shape-1",
-  "--im-shape-2",
-  "--im-shape-3",
-  "--im-shape-4",
-] as const;
+/**
+ * Orden en que las figuras reciben el azul: un recorrido en el sentido de las
+ * agujas del reloj empezando por el triángulo, arriba a la derecha.
+ */
+const RECORRIDO = [1, 3, 2, 0] as const;
 
-const SALTO = 2;
+const TOTAL_PASOS = RECORRIDO.length + 1; // los cuatro relevos y el reposo
+
+/** Color de fondo en un paso dado. En el paso 0 es el azul de partida. */
+const fondoEnPaso = (paso: number): string =>
+  paso === 0 ? AZUL : BASE[RECORRIDO[paso - 1]];
+
+/** Color de una figura en un paso dado: el azul si le toca, si no el suyo. */
+const figuraEnPaso = (indiceFigura: number, paso: number): string =>
+  paso !== 0 && RECORRIDO[paso - 1] === indiceFigura ? AZUL : BASE[indiceFigura];
 
 interface PaletaContextValue {
-  /** Cuántas veces se ha girado. */
   paso: number;
   /** Color al que pasará el fondo en la siguiente pulsación. */
   siguienteColor: string;
@@ -58,9 +74,6 @@ export function usePaleta(): PaletaContextValue | null {
   return useContext(PaletaContext);
 }
 
-const colorDelHueco = (indiceHueco: number, paso: number): string =>
-  PALETA[(indiceHueco + paso * SALTO) % PALETA.length];
-
 export function PaletaProvider({ children }: { children: ReactNode }) {
   const [paso, setPaso] = useState(0);
 
@@ -69,8 +82,12 @@ export function PaletaProvider({ children }: { children: ReactNode }) {
   // no llegaría a los bordes de la ventana.
   useEffect(() => {
     const raiz = document.documentElement;
-    HUECOS.forEach((hueco, indice) => {
-      raiz.style.setProperty(hueco, colorDelHueco(indice, paso));
+    raiz.style.setProperty("--im-bg", fondoEnPaso(paso));
+    BASE.forEach((_, indice) => {
+      raiz.style.setProperty(
+        "--im-shape-" + (indice + 1),
+        figuraEnPaso(indice, paso),
+      );
     });
   }, [paso]);
 
@@ -79,15 +96,25 @@ export function PaletaProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const raiz = document.documentElement;
     return () => {
-      HUECOS.forEach((hueco) => raiz.style.removeProperty(hueco));
+      raiz.style.removeProperty("--im-bg");
+      BASE.forEach((_, indice) =>
+        raiz.style.removeProperty("--im-shape-" + (indice + 1)),
+      );
     };
   }, []);
 
-  const girar = useCallback(() => setPaso((actual) => actual + 1), []);
+  const girar = useCallback(
+    () => setPaso((actual) => (actual + 1) % TOTAL_PASOS),
+    [],
+  );
 
   return (
     <PaletaContext.Provider
-      value={{ paso, siguienteColor: colorDelHueco(0, paso + 1), girar }}
+      value={{
+        paso,
+        siguienteColor: fondoEnPaso((paso + 1) % TOTAL_PASOS),
+        girar,
+      }}
     >
       {children}
     </PaletaContext.Provider>
