@@ -40,6 +40,9 @@ export interface GenerationHandle {
     output: string;
     usage?: TokenUsage;
     finishReason?: string;
+    /** Proveedor y modelo que atendieron, si la cadena cayo a un respaldo. */
+    model?: string;
+    vendor?: string;
   }): void;
   fail(error: unknown): void;
 }
@@ -165,10 +168,14 @@ export async function getObservability(): Promise<Observability> {
             firstTokenAt = new Date();
           },
 
-          end({ output, usage, finishReason }) {
+          end({ output, usage, finishReason, model, vendor }) {
             try {
               generation.end({
                 output,
+                // Si la cadena cayo a un respaldo, corregimos el modelo: de lo
+                // contrario Langfuse calcularia el coste con la tarifa del
+                // proveedor equivocado.
+                ...(model && model !== input.model ? { model } : {}),
                 // completionStartTime es lo que Langfuse usa para calcular el
                 // time-to-first-token, la metrica que de verdad percibe el
                 // usuario en un chat con streaming.
@@ -178,7 +185,7 @@ export async function getObservability(): Promise<Observability> {
                   output: usage.output ?? 0,
                   total: usage.total ?? 0,
                 },
-                metadata: { finishReason },
+                metadata: { finishReason, servedBy: vendor ?? input.vendor },
               });
               trace.update({ output });
             } catch (error) {

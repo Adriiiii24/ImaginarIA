@@ -251,7 +251,7 @@ class GeminiProvider implements ChatProvider {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Groq (API compatible con OpenAI)                                           */
+/* Proveedores con API compatible con OpenAI (Groq, Cerebras, ...)            */
 /* -------------------------------------------------------------------------- */
 
 interface GroqStreamChunk {
@@ -266,19 +266,30 @@ interface GroqStreamChunk {
   };
 }
 
-class GroqProvider implements ChatProvider {
-  readonly vendor = "groq";
-
+/**
+ * Una sola implementacion para todos los proveedores que hablan el dialecto de
+ * OpenAI. Groq y Cerebras solo se diferencian en la URL base y en si aceptan
+ * stream_options, asi que no merecen dos clases.
+ */
+class OpenAICompatibleProvider implements ChatProvider {
   constructor(
+    readonly vendor: string,
     private readonly apiKey: string,
     readonly model: string,
     readonly parameters: Record<string, number>,
     /**
-     * Sobreescribible para apuntar a cualquier pasarela compatible con la API
-     * de OpenAI (y para poder probar el pipeline de streaming contra un
-     * servidor local sin gastar cuota).
+     * Sobreescribible para apuntar a cualquier pasarela compatible (y para
+     * probar el pipeline de streaming contra un servidor local sin gastar
+     * cuota).
      */
     private readonly baseUrl = "https://api.groq.com/openai/v1",
+    /**
+     * Groq necesita stream_options para reportar tokens. Cerebras no lo
+     * documenta y podria rechazar el parametro desconocido con un 400, asi
+     * que ahi lo omitimos y nos conformamos con el 'usage' que envie por su
+     * cuenta.
+     */
+    private readonly includeUsage = true,
   ) {}
 
   async *stream({
@@ -300,7 +311,9 @@ class GroqProvider implements ChatProvider {
           stream: true,
           // Sin esto, un stream compatible con OpenAI nunca reporta uso de
           // tokens, y sin tokens no hay coste calculable en Langfuse.
-          stream_options: { include_usage: true },
+          ...(this.includeUsage
+            ? { stream_options: { include_usage: true } }
+            : {}),
           temperature: this.parameters.temperature,
           top_p: this.parameters.topP,
           max_tokens: this.parameters.maxOutputTokens,
@@ -355,26 +368,19 @@ class GroqProvider implements ChatProvider {
  * cliente construido con variables de entorno de un despliegue anterior en
  * un proceso serverless reutilizado.
  */
-export function resolveProvider(): ChatProvider {
-  const vendor = (process.env.AI_PROVIDER ?? "google").toLowerCase();
-
-  const shared = {
-    temperature: num(process.env.AI_TEMPERATURE, 1),
-    topP: num(process.env.AI_TOP_P, 0.95),
-    // Holgado a proposito: en los modelos con razonamiento, los tokens de
-    // pensamiento se descuentan de este mismo presupuesto. Con 1200 el modelo
-    // gastaba ~900 pensando y la respuesta visible se cortaba a media frase.
-    maxOutputTokens: num(process.env.AI_MAX_OUTPUT_TOKENS, 4000),
-  };
-
+function createProvider(
+  vendor: string,
+  shared: Record<string, number>,
+): ChatProvider {
   if (vendor === "groq") {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
       throw new ProviderUnconfiguredError(
-        "Falta GROQ_API_KEY. Añádela a .env.local (ver .env.example).",
+        "groq: falta GROQ_API_KEY (ver .env.example).",
       );
     }
-    return new GroqProvider(
+    return new OpenAICompatibleProvider(
+      "groq",
       apiKey,
       process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile",
       shared,
@@ -382,11 +388,28 @@ export function resolveProvider(): ChatProvider {
     );
   }
 
+  if (vendor === "cerebras") {
+    const apiKey = process.env.CEREBRAS_API_KEY;
+    if (!apiKey) {
+      throw new ProviderUnconfiguredError(
+        "cerebras: falta CEREBRAS_API_KEY (ver .env.example).",
+      );
+    }
+    return new OpenAICompatibleProvider(
+      "cerebras",
+      apiKey,
+      process.env.CEREBRAS_MODEL ?? "llama-3.3-70b",
+      shared,
+      process.env.CEREBRAS_BASE_URL ?? "https://api.cerebras.ai/v1",
+      false,
+    );
+  }
+
   if (vendor === "google") {
     const apiKey = process.env.GOOGLE_AI_API_KEY;
     if (!apiKey) {
       throw new ProviderUnconfiguredError(
-        "Falta GOOGLE_AI_API_KEY. Añádela a .env.local (ver .env.example).",
+        "google: falta GOOGLE_AI_API_KEY (ver .env.example).",
       );
     }
     // "default" (o vacio) omite el campo y deja decidir al modelo.
@@ -400,6 +423,72 @@ export function resolveProvider(): ChatProvider {
   }
 
   throw new ProviderUnconfiguredError(
-    'AI_PROVIDER="' + vendor + '" no reconocido. Validos: "google" | "groq".',
+    'AI_PROVIDER="' +
+      vendor +
+      '" no reconocido. Validos: "google" | "groq" | "cerebras".',
   );
+}
+
+/**
+ * Construye la cadena de proveedores activa leyendo el entorno.
+ *
+ * AI_PROVIDER admite una lista separada por comas ("google,groq"): el primero
+ * atiende, y los siguientes solo entran si el anterior se queda sin cuota o
+ * esta saturado. Un proveedor sin credenciales se omite en silencio, para que
+ * anadir un respaldo sea poner una clave y nada mas.
+ *
+ * Se invoca por peticion a proposito: el coste es cero y evita cachear
+ * clientes construidos con variables de entorno de un despliegue anterior en
+ * un proceso serverless reutilizado.
+ */
+export function resolveProviderChain(): ChatProvider[] {
+  const vendors = (process.env.AI_PROVIDER ?? "google")
+    .split(",")
+    .map((vendor) => vendor.trim().toLowerCase())
+    .filter(Boolean);
+
+  const shared = {
+    temperature: num(process.env.AI_TEMPERATURE, 1),
+    topP: num(process.env.AI_TOP_P, 0.95),
+    // Holgado a proposito: en los modelos con razonamiento, los tokens de
+    // pensamiento se descuentan de este mismo presupuesto. Con 1200 el modelo
+    // gastaba ~900 pensando y la respuesta visible se cortaba a media frase.
+    maxOutputTokens: num(process.env.AI_MAX_OUTPUT_TOKENS, 4000),
+  };
+
+  const chain: ChatProvider[] = [];
+  const skipped: string[] = [];
+
+  for (const vendor of vendors) {
+    try {
+      chain.push(createProvider(vendor, shared));
+    } catch (error) {
+      if (error instanceof ProviderUnconfiguredError) {
+        skipped.push(error.message);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (chain.length === 0) {
+    throw new ProviderUnconfiguredError(
+      skipped.join(" | ") || "No hay ningun proveedor de IA configurado.",
+    );
+  }
+
+  return chain;
+}
+
+/**
+ * Decide si merece la pena pasar al siguiente proveedor de la cadena.
+ *
+ * Solo los fallos de disponibilidad: cuota agotada (429) y saturacion o caida
+ * (5xx). Un 400 o un 404 son errores nuestros -payload mal formado, modelo
+ * inexistente- y reintentarlos en otro proveedor solo esconde el bug.
+ */
+export function shouldFailover(error: unknown): boolean {
+  if (!(error instanceof ProviderError)) return false;
+  const status = error.status ?? 0;
+  return status === 429 || status >= 500;
 }

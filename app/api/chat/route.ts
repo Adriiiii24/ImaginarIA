@@ -2,7 +2,8 @@ import type { NextRequest } from "next/server";
 import {
   ProviderError,
   ProviderUnconfiguredError,
-  resolveProvider,
+  resolveProviderChain,
+  shouldFailover,
 } from "@/lib/ai/provider";
 import { buildSystemPrompt } from "@/lib/ai/system-prompt";
 import {
@@ -198,9 +199,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     return errorResponse("bad_request", validated, 400);
   }
 
-  let provider;
+  let chain;
   try {
-    provider = resolveProvider();
+    chain = resolveProviderChain();
   } catch (error) {
     if (error instanceof ProviderUnconfiguredError) {
       // 503 y no 500: el servicio esta bien, le falta configuracion.
@@ -215,13 +216,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   const systemPrompt = buildSystemPrompt(managedPrompt);
 
   const observability = await getObservability();
+  const primary = chain[0];
   const generation = observability.startGeneration({
     sessionId: validated.sessionId,
     messages: validated.messages,
     systemPrompt,
-    vendor: provider.vendor,
-    model: provider.model,
-    parameters: provider.parameters,
+    vendor: primary.vendor,
+    model: primary.model,
+    parameters: primary.parameters,
   });
 
   // Cortamos la llamada al proveedor si el cliente cierra la pestana: sin
@@ -237,32 +239,76 @@ export async function POST(request: NextRequest): Promise<Response> {
       let usage: TokenUsage | undefined;
       let finishReason: string | undefined;
 
+      // Proveedor que finalmente atiende. Puede no ser el primero de la
+      // cadena si este se queda sin cuota o esta saturado.
+      let servedBy = primary;
+
       try {
         sink.enqueue(
           line({
             type: "meta",
             traceId: generation.traceId,
-            model: provider.model,
+            model: primary.model,
           }),
         );
 
-        for await (const chunk of provider.stream({
-          systemPrompt,
-          messages: validated.messages,
-          signal: controller.signal,
-        })) {
-          if (chunk.usage) usage = { ...usage, ...chunk.usage };
-          if (chunk.finishReason) finishReason = chunk.finishReason;
+        for (let index = 0; index < chain.length; index++) {
+          const provider = chain[index];
+          const isLast = index === chain.length - 1;
+          // Solo podemos cambiar de proveedor mientras no hayamos emitido
+          // nada: si el cliente ya esta leyendo texto, reempezar con otro
+          // modelo produciria una respuesta con dos comienzos pegados.
+          let emitted = false;
 
-          if (chunk.text) {
-            generation.markFirstToken();
-            text += chunk.text;
-            sink.enqueue(line({ type: "delta", text: chunk.text }));
+          try {
+            for await (const chunk of provider.stream({
+              systemPrompt,
+              messages: validated.messages,
+              signal: controller.signal,
+            })) {
+              if (chunk.usage) usage = { ...usage, ...chunk.usage };
+              if (chunk.finishReason) finishReason = chunk.finishReason;
+
+              if (chunk.text) {
+                generation.markFirstToken();
+                emitted = true;
+                text += chunk.text;
+                sink.enqueue(line({ type: "delta", text: chunk.text }));
+              }
+            }
+
+            servedBy = provider;
+            break;
+          } catch (error) {
+            if (isLast || emitted || !shouldFailover(error)) throw error;
+
+            console.warn(
+              "[api/chat] " + provider.vendor + " no disponible, pasando a " +
+                chain[index + 1].vendor,
+              error instanceof Error ? error.message : error,
+            );
+            // Descartamos el uso parcial del proveedor fallido para no
+            // atribuirle tokens al que si conteste.
+            usage = undefined;
+            finishReason = undefined;
           }
         }
 
-        generation.end({ output: text, usage, finishReason });
-        sink.enqueue(line({ type: "done", finishReason }));
+        generation.end({
+          output: text,
+          usage,
+          finishReason,
+          model: servedBy.model,
+          vendor: servedBy.vendor,
+        });
+        sink.enqueue(
+          line({
+            type: "done",
+            finishReason,
+            model: servedBy.model,
+            vendor: servedBy.vendor,
+          }),
+        );
       } catch (error) {
         const aborted =
           controller.signal.aborted ||
@@ -341,22 +387,24 @@ export async function POST(request: NextRequest): Promise<Response> {
  * ningun secreto: solo si estan presentes.
  */
 export async function GET(): Promise<Response> {
-  let providerReady = false;
-  let model: string | null = null;
-
+  // Devuelve la cadena completa: asi se ve de un vistazo si el respaldo que
+  // creias configurado se esta omitiendo por falta de clave.
+  let chain: Array<{ vendor: string; model: string }> = [];
   try {
-    const provider = resolveProvider();
-    providerReady = true;
-    model = provider.model;
+    chain = resolveProviderChain().map((provider) => ({
+      vendor: provider.vendor,
+      model: provider.model,
+    }));
   } catch {
-    providerReady = false;
+    chain = [];
   }
 
   return Response.json(
     {
-      status: providerReady ? "ok" : "unconfigured",
-      provider: process.env.AI_PROVIDER ?? "google",
-      model,
+      status: chain.length > 0 ? "ok" : "unconfigured",
+      configured: process.env.AI_PROVIDER ?? "google",
+      chain,
+      fallback: chain.length > 1,
       tracing: (await getObservability()).enabled,
     },
     { headers: { "Cache-Control": "no-store" } },

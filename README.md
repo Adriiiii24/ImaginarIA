@@ -36,7 +36,8 @@ Tres decisiones que sostienen el resto:
 1. **La clave de API nunca sale del servidor.** El navegador solo habla con
    `/api/chat`. Ninguna variable lleva prefijo `NEXT_PUBLIC_`.
 2. **El proveedor está detrás de una interfaz** (`ChatProvider`). Cambiar de
-   Gemini a Groq es una variable de entorno, no una refactorización.
+   Gemini a Groq —o encadenar ambos con failover— es una variable de entorno,
+   no una refactorización.
 3. **La observabilidad es opcional por diseño.** Sin credenciales de Langfuse
    la aplicación funciona idéntica y solo pierde las trazas.
 
@@ -98,6 +99,85 @@ tokens pensando, y esos tokens salen del mismo bolsillo que la respuesta
 visible. Con el valor por defecto anterior (1200) las respuestas se cortaban a
 media palabra. De ahí que ahora sea 4000. Se facturan aunque nunca se vean, así
 que van contabilizados en el coste que reporta Langfuse.
+
+---
+
+## Cadena de proveedores (failover)
+
+`AI_PROVIDER` acepta una lista separada por comas:
+
+```bash
+AI_PROVIDER=google,groq
+GOOGLE_AI_API_KEY=...
+GROQ_API_KEY=...
+```
+
+El primero atiende. Si devuelve `429` (cuota agotada) o `5xx` (saturado o
+caído), la petición pasa al siguiente **de forma transparente para el
+usuario**. Un proveedor sin su clave se omite en silencio, así que añadir un
+respaldo es pegar una clave más.
+
+Comprueba la cadena activa sin gastar un token:
+
+```bash
+curl http://localhost:3000/api/chat
+# {"status":"ok","chain":[{"vendor":"google","model":"gemini-3.7-flash"},
+#                         {"vendor":"groq","model":"llama-3.3-70b-versatile"}],
+#  "fallback":true,"tracing":true}
+```
+
+Tres reglas que hacen que esto sea seguro y no un parche:
+
+- **Solo se cambia de proveedor antes del primer token.** Si el cliente ya está
+  leyendo texto, reempezar con otro modelo produciría una respuesta con dos
+  comienzos pegados. Emitido un solo carácter, el error se propaga.
+- **Solo por fallos de disponibilidad** (`429` y `5xx`). Un `400` o un `404` son
+  bugs nuestros —payload mal formado, modelo inexistente— y reintentarlos en
+  otro proveedor solo los esconde.
+- **La traza registra quién atendió de verdad.** El evento `done` y los
+  metadatos de Langfuse llevan el modelo real, no el previsto, para que el
+  coste se calcule con la tarifa correcta.
+
+> **Sobre encadenar cuentas del mismo proveedor:** no. Rotar varias cuentas
+> gratuitas de Google o Groq para esquivar la cuota infringe sus términos y
+> acaba con las claves canceladas. Esta cadena es entre proveedores distintos,
+> con una cuenta legítima en cada uno.
+
+### Qué poner en la cadena
+
+Ningún proveedor ofrece una API gratuita sin límites. Estos son los niveles
+gratuitos permanentes que compensan como respaldo (**los números cambian y
+casi todos los han movido detrás del login de su consola: contrasta antes de
+construir sobre ellos**):
+
+| Proveedor | Nivel gratuito | Notas |
+| --- | --- | --- |
+| **Groq** | ~30 req/min, hasta 14.400/día en modelos pequeños | Rapidísimo. El respaldo más directo: ya está implementado. |
+| **Cerebras** | ~30 req/min, ~1M tokens/día | API compatible con OpenAI, implementada aquí. |
+| **Google AI Studio** | Publicado solo en tu consola | Es el primario actual. Mira el tuyo en [aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit). |
+| **Mistral** | Muy generoso en la capa Experiment | Exige aceptar que entrenen con tus datos. Piénsalo si el chat es público. |
+| **OpenRouter** | ~20 req/min en los modelos `:free` | Agrega muchos modelos tras una sola clave. |
+
+Para añadir uno compatible con OpenAI que no esté implementado, reutiliza el
+adaptador existente apuntándolo a su URL base:
+
+```bash
+AI_PROVIDER=google,groq
+GROQ_BASE_URL=https://la-pasarela-compatible/v1
+```
+
+### La alternativa que probablemente deberías tomar antes
+
+Vincular una cuenta de facturación en Google AI Studio **no tiene gasto mínimo**
+y sube los límites de inmediato. Con el coste medido en las trazas de este
+proyecto —unos 0,005 $ por respuesta completa con `gemini-3.7-flash`— un
+portfolio con 200 conversaciones al mes cuesta alrededor de 1 $, y con
+`gemini-3.1-flash-lite` un tercio de eso.
+
+La cadena de failover sigue mereciendo la pena por resiliencia: durante el
+desarrollo de este proyecto, `gemini-3.7-flash` devolvió `503` por saturación
+varias veces en una misma tarde. Pero como solución al problema de cuota, la
+tarjeta es más barata que la complejidad.
 
 ---
 

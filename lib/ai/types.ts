@@ -32,7 +32,9 @@ export interface ChatRequestBody {
 export type StreamEvent =
   | { type: "meta"; traceId: string | null; model: string }
   | { type: "delta"; text: string }
-  | { type: "done"; finishReason?: string }
+  // 'model' aqui es el que ATENDIO de verdad, que puede no ser el anunciado
+  // en 'meta' si la cadena tuvo que caer al proveedor de respaldo.
+  | { type: "done"; finishReason?: string; model?: string; vendor?: string }
   | { type: "error"; code: ErrorCode; message: string };
 
 export type ErrorCode =
