@@ -70,15 +70,34 @@ Comprueba la configuración sin gastar un token:
 
 ```bash
 curl http://localhost:3000/api/chat
-# {"status":"ok","provider":"google","model":"gemini-2.5-flash","tracing":false}
+# {"status":"ok","provider":"google","model":"gemini-3.7-flash","tracing":false}
 ```
 
 `status: "unconfigured"` significa que falta la clave del proveedor; la ruta
 `POST` devolverá entonces `503`, no `500`.
 
-> Los identificadores de modelo de ambos proveedores rotan con frecuencia.
-> Verifica en la consola correspondiente cuáles están disponibles antes de
-> fijar `GEMINI_MODEL` o `GROQ_MODEL`.
+> Los identificadores de modelo de ambos proveedores rotan con frecuencia y se
+> retiran sin aviso: `gemini-2.5-flash` ya devuelve 404 a las claves nuevas.
+> Lista los que admite tu clave antes de fijar `GEMINI_MODEL`:
+>
+> ```bash
+> curl -H "x-goog-api-key: $GOOGLE_AI_API_KEY" \
+>   https://generativelanguage.googleapis.com/v1beta/models
+> ```
+
+### Dos trampas del nivel gratuito de Gemini
+
+**20 peticiones por minuto.** Es la cuota de `generate_content_free_tier_requests`.
+Al superarla, la API responde `429` y el chat muestra "Se ha agotado la cuota del
+modelo". Para una demo pública es el límite que vas a tocar primero, mucho antes
+que el de facturación.
+
+**Los tokens de razonamiento se descuentan de `AI_MAX_OUTPUT_TOKENS`.** No son
+un presupuesto aparte: en una petición típica el modelo gasta entre 500 y 1000
+tokens pensando, y esos tokens salen del mismo bolsillo que la respuesta
+visible. Con el valor por defecto anterior (1200) las respuestas se cortaban a
+media palabra. De ahí que ahora sea 4000. Se facturan aunque nunca se vean, así
+que van contabilizados en el coste que reporta Langfuse.
 
 ---
 
@@ -87,10 +106,10 @@ curl http://localhost:3000/api/chat
 `POST /api/chat` responde `200` con **NDJSON**: un objeto JSON por línea.
 
 ```jsonc
-{"type":"meta","traceId":"…","model":"gemini-2.5-flash"}
-{"type":"delta","text":"**La Grieta.** "}
-{"type":"delta","text":"Asumes que…"}
-{"type":"done","finishReason":"stop"}
+{"type":"meta","traceId":"…","model":"gemini-3.7-flash"}
+{"type":"delta","text":"Tratas tu landing como si fuera "}
+{"type":"delta","text":"un folleto persuasivo cuando…"}
+{"type":"done","finishReason":"STOP"}
 ```
 
 Se eligió NDJSON sobre texto plano por un motivo concreto: una vez enviada la

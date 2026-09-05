@@ -280,16 +280,31 @@ export async function POST(request: NextRequest): Promise<Response> {
           console.error("[api/chat] fallo durante el stream", error);
           generation.fail(error);
 
-          const code: ErrorCode =
-            error instanceof ProviderError ? "provider_error" : "internal";
+          const isProviderError = error instanceof ProviderError;
+          const status = isProviderError ? error.status : undefined;
+
+          // Distinguimos la cuota agotada del resto de fallos. Es el error mas
+          // probable en una demo publica sobre el nivel gratuito (Gemini free
+          // tier permite 20 peticiones por minuto), y decirle al usuario
+          // "reintenta en unos segundos" cuando el proveedor pide un minuto
+          // entero solo consigue que reintente y vuelva a fallar.
+          const quotaExhausted = status === 429;
+
+          const code: ErrorCode = quotaExhausted
+            ? "rate_limited"
+            : isProviderError
+              ? "provider_error"
+              : "internal";
+
           sink.enqueue(
             line({
               type: "error",
               code,
               // No filtramos el detalle del proveedor al cliente: puede
               // contener trazas internas. Queda en los logs del servidor.
-              message:
-                "El modelo ha fallado a mitad de respuesta. Reinténtalo en unos segundos.",
+              message: quotaExhausted
+                ? "Se ha agotado la cuota del modelo. Espera un minuto y vuelve a intentarlo."
+                : "El modelo ha fallado a mitad de respuesta. Reinténtalo en unos segundos.",
             }),
           );
         }

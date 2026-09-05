@@ -225,14 +225,22 @@ export async function getObservability(): Promise<Observability> {
  * el llamante usa entonces IMAGINARIA_SYSTEM_PROMPT. Empieza SIEMPRE con el
  * prompt en codigo y adopta Prompt Management cuando quieras iterar en
  * caliente: asi el repositorio sigue siendo la referencia auditable.
+ *
+ * Esta DESACTIVADO salvo que pongas LANGFUSE_PROMPT_LABEL. Motivo: si el
+ * prompt no existe en Langfuse, el SDK escribe su propio "Prompt not found"
+ * en consola en cada peticion aunque nosotros capturemos el error, y ese
+ * ruido acaba tapando los fallos que si importan. Crea el prompt
+ * "imaginaria-system" en Langfuse y define la etiqueta para activarlo.
  */
 export async function fetchManagedSystemPrompt(): Promise<string | null> {
+  if (!process.env.LANGFUSE_PROMPT_LABEL) return null;
+
   const client = await getClient();
   if (!client) return null;
 
   try {
     const prompt = await client.getPrompt(SYSTEM_PROMPT_NAME, undefined, {
-      label: process.env.LANGFUSE_PROMPT_LABEL ?? "production",
+      label: process.env.LANGFUSE_PROMPT_LABEL,
       // El cache en memoria evita una llamada de red por mensaje; a los 60s
       // se refresca en segundo plano sin bloquear la peticion en curso.
       cacheTtlSeconds: 60,
