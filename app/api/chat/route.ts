@@ -16,6 +16,7 @@ import type {
   StreamEvent,
   TokenUsage,
 } from "@/lib/ai/types";
+import { env, envNum } from "@/lib/env";
 
 /**
  * POST /api/chat
@@ -58,9 +59,8 @@ const MAX_TOTAL_CHARS = 24_000;
  * este mapa por @upstash/ratelimit con Redis, que es lo unico que da un
  * limite real y distribuido.
  */
-const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_REQUESTS ?? 20);
-const RATE_LIMIT_WINDOW_MS =
-  Number(process.env.RATE_LIMIT_WINDOW_SECONDS ?? 60) * 1_000;
+const RATE_LIMIT_MAX = envNum("RATE_LIMIT_REQUESTS", 20);
+const RATE_LIMIT_WINDOW_MS = envNum("RATE_LIMIT_WINDOW_SECONDS", 60) * 1_000;
 
 const hits = new Map<string, { count: number; resetAt: number }>();
 
@@ -404,7 +404,7 @@ export async function GET(): Promise<Response> {
   return Response.json(
     {
       status: chain.length > 0 ? "ok" : "unconfigured",
-      configured: process.env.AI_PROVIDER ?? "google",
+      configured: env("AI_PROVIDER") ?? "google",
       chain,
       fallback: chain.length > 1,
       tracing: (await getObservability()).enabled,

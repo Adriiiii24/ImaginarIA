@@ -4,6 +4,7 @@ import type {
   StreamChatParams,
   TokenUsage,
 } from "@/lib/ai/types";
+import { env, envNum } from "@/lib/env";
 
 /**
  * Capa de proveedor.
@@ -36,11 +37,6 @@ export class ProviderUnconfiguredError extends Error {
     super(message);
     this.name = "ProviderUnconfiguredError";
   }
-}
-
-function num(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -96,7 +92,7 @@ async function* readSse(
  */
 const RETRIABLE = new Set([500, 502, 503, 504]);
 
-const MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS ?? 3);
+const MAX_ATTEMPTS = envNum("AI_MAX_ATTEMPTS", 3);
 
 /**
  * Lanza la peticion reintentando los fallos transitorios.
@@ -382,7 +378,7 @@ function createProvider(
   shared: Record<string, number>,
 ): ChatProvider {
   if (vendor === "groq") {
-    const apiKey = process.env.GROQ_API_KEY;
+    const apiKey = env("GROQ_API_KEY");
     if (!apiKey) {
       throw new ProviderUnconfiguredError(
         "groq: falta GROQ_API_KEY (ver .env.example).",
@@ -391,14 +387,14 @@ function createProvider(
     return new OpenAICompatibleProvider(
       "groq",
       apiKey,
-      process.env.GROQ_MODEL ?? "openai/gpt-oss-120b",
+      env("GROQ_MODEL") ?? "openai/gpt-oss-120b",
       shared,
-      process.env.GROQ_BASE_URL,
+      env("GROQ_BASE_URL"),
     );
   }
 
   if (vendor === "cerebras") {
-    const apiKey = process.env.CEREBRAS_API_KEY;
+    const apiKey = env("CEREBRAS_API_KEY");
     if (!apiKey) {
       throw new ProviderUnconfiguredError(
         "cerebras: falta CEREBRAS_API_KEY (ver .env.example).",
@@ -407,25 +403,25 @@ function createProvider(
     return new OpenAICompatibleProvider(
       "cerebras",
       apiKey,
-      process.env.CEREBRAS_MODEL ?? "llama-3.3-70b",
+      env("CEREBRAS_MODEL") ?? "llama-3.3-70b",
       shared,
-      process.env.CEREBRAS_BASE_URL ?? "https://api.cerebras.ai/v1",
+      env("CEREBRAS_BASE_URL") ?? "https://api.cerebras.ai/v1",
       false,
     );
   }
 
   if (vendor === "google") {
-    const apiKey = process.env.GOOGLE_AI_API_KEY;
+    const apiKey = env("GOOGLE_AI_API_KEY");
     if (!apiKey) {
       throw new ProviderUnconfiguredError(
         "google: falta GOOGLE_AI_API_KEY (ver .env.example).",
       );
     }
     // "default" (o vacio) omite el campo y deja decidir al modelo.
-    const level = process.env.GEMINI_THINKING_LEVEL ?? "low";
+    const level = env("GEMINI_THINKING_LEVEL") ?? "low";
     return new GeminiProvider(
       apiKey,
-      process.env.GEMINI_MODEL ?? "gemini-3.7-flash",
+      env("GEMINI_MODEL") ?? "gemini-3.7-flash",
       shared,
       level === "default" || level === "" ? null : level,
     );
@@ -451,18 +447,18 @@ function createProvider(
  * un proceso serverless reutilizado.
  */
 export function resolveProviderChain(): ChatProvider[] {
-  const vendors = (process.env.AI_PROVIDER ?? "google")
+  const vendors = (env("AI_PROVIDER") ?? "google")
     .split(",")
     .map((vendor) => vendor.trim().toLowerCase())
     .filter(Boolean);
 
   const shared = {
-    temperature: num(process.env.AI_TEMPERATURE, 1),
-    topP: num(process.env.AI_TOP_P, 0.95),
+    temperature: envNum("AI_TEMPERATURE", 1),
+    topP: envNum("AI_TOP_P", 0.95),
     // Holgado a proposito: en los modelos con razonamiento, los tokens de
     // pensamiento se descuentan de este mismo presupuesto. Con 1200 el modelo
     // gastaba ~900 pensando y la respuesta visible se cortaba a media frase.
-    maxOutputTokens: num(process.env.AI_MAX_OUTPUT_TOKENS, 4000),
+    maxOutputTokens: envNum("AI_MAX_OUTPUT_TOKENS", 4000),
   };
 
   const chain: ChatProvider[] = [];

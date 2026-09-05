@@ -4,6 +4,7 @@ import type {
   LangfusePromptClient,
 } from "langfuse";
 import type { TokenUsage } from "@/lib/ai/types";
+import { env } from "@/lib/env";
 import {
   IMAGINARIA_SYSTEM_PROMPT,
   SYSTEM_PROMPT_NAME,
@@ -32,7 +33,7 @@ import {
  */
 
 const isEnabled = (): boolean =>
-  Boolean(process.env.LANGFUSE_PUBLIC_KEY && process.env.LANGFUSE_SECRET_KEY);
+  Boolean(env("LANGFUSE_PUBLIC_KEY") && env("LANGFUSE_SECRET_KEY"));
 
 /** Handle de una generacion en curso. Ninguno de sus metodos lanza. */
 export interface GenerationHandle {
@@ -95,14 +96,14 @@ async function getClient(): Promise<Langfuse | null> {
     try {
       const { Langfuse: LangfuseClient } = await import("langfuse");
       return new LangfuseClient({
-        publicKey: process.env.LANGFUSE_PUBLIC_KEY!,
-        secretKey: process.env.LANGFUSE_SECRET_KEY!,
+        publicKey: env("LANGFUSE_PUBLIC_KEY")!,
+        secretKey: env("LANGFUSE_SECRET_KEY")!,
         // Cloud UE por defecto. Para Cloud US o self-hosted, define
         // LANGFUSE_BASE_URL.
-        baseUrl: process.env.LANGFUSE_BASE_URL ?? "https://cloud.langfuse.com",
+        baseUrl: env("LANGFUSE_BASE_URL") ?? "https://cloud.langfuse.com",
         // Distingue dev de produccion en el dashboard sin mezclar metricas.
-        environment: process.env.LANGFUSE_ENVIRONMENT ?? process.env.NODE_ENV,
-        release: process.env.VERCEL_GIT_COMMIT_SHA,
+        environment: env("LANGFUSE_ENVIRONMENT") ?? process.env.NODE_ENV,
+        release: env("VERCEL_GIT_COMMIT_SHA"),
         // En serverless queremos enviar cuanto antes, no acumular lotes que
         // nunca se llegan a despachar.
         flushAt: 1,
@@ -279,7 +280,7 @@ const LOCAL_PROMPT: ResolvedPrompt = {
  * aunque capturemos el error, y ese ruido acaba tapando los fallos reales.
  */
 export async function resolveSystemPrompt(): Promise<ResolvedPrompt> {
-  const label = process.env.LANGFUSE_PROMPT_LABEL;
+  const label = env("LANGFUSE_PROMPT_LABEL");
   if (!label) return LOCAL_PROMPT;
 
   const client = await getClient();
