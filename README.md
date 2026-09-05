@@ -88,10 +88,15 @@ curl http://localhost:3000/api/chat
 
 ### Dos trampas del nivel gratuito de Gemini
 
-**20 peticiones por minuto.** Es la cuota de `generate_content_free_tier_requests`.
-Al superarla, la API responde `429` y el chat muestra "Se ha agotado la cuota del
-modelo". Para una demo pública es el límite que vas a tocar primero, mucho antes
-que el de facturación.
+**20 peticiones por minuto, y el contador es POR MODELO.** Es la cuota de
+`generate_content_free_tier_requests`. Al superarla la API responde `429` y el
+chat muestra "Se ha agotado la cuota del modelo". Para una demo pública es el
+límite que vas a tocar primero, mucho antes que el de facturación.
+
+Que sea por modelo tiene una consecuencia práctica: cambiar `GEMINI_MODEL`
+-de `gemini-3.7-flash` a `gemini-3.1-flash-lite`, por ejemplo- te da un
+contador limpio de inmediato, con la misma clave y dentro de los términos.
+Sirve para salir del paso, no como estrategia: acabarás agotando los dos.
 
 **Los tokens de razonamiento se descuentan de `AI_MAX_OUTPUT_TOKENS`.** No son
 un presupuesto aparte: en una petición típica el modelo gasta entre 500 y 1000

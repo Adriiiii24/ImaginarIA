@@ -84,8 +84,17 @@ async function* readSse(
   }
 }
 
-/** Fallos transitorios del proveedor: saturacion, cuota momentanea, 5xx. */
-const RETRIABLE = new Set([429, 500, 502, 503, 504]);
+/**
+ * Fallos que merece la pena reintentar CONTRA EL MISMO proveedor.
+ *
+ * El 429 esta deliberadamente fuera. Reintentar una cuota agotada es
+ * contraproducente por partida doble: cada intento consume otra unidad del
+ * limite que ya se ha superado, y el proveedor suele pedir 30-60 segundos de
+ * espera, muy por encima de cualquier backoff razonable dentro de una
+ * peticion HTTP. Ante un 429 lo correcto es cambiar de proveedor -de eso se
+ * ocupa shouldFailover- o devolver el error, no insistir.
+ */
+const RETRIABLE = new Set([500, 502, 503, 504]);
 
 const MAX_ATTEMPTS = Number(process.env.AI_MAX_ATTEMPTS ?? 3);
 
