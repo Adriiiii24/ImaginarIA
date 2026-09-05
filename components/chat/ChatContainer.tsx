@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { useImaginaria } from "@/components/chat/useImaginaria";
+import { usePaleta } from "@/components/palette";
+import Image from "next/image";
 
 const SUGGESTIONS = [
   "Tengo una app de hábitos más y no sé en qué se diferencia",
@@ -24,6 +26,8 @@ interface ChatContainerProps {
  */
 export function ChatContainer({ className = "", autoFocus }: ChatContainerProps) {
   const { messages, status, error, send, stop, reset } = useImaginaria();
+  // null cuando no hay PaletaProvider por encima: el boton simplemente no sale.
+  const paleta = usePaleta();
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -70,24 +74,48 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
       {/* Cabecera */}
       <header className="z-10 flex shrink-0 items-center justify-between border-b border-im-border px-5 py-3.5">
         <div className="flex items-center gap-2.5">
-          <span className="relative flex size-2">
-            <span className="absolute inline-flex size-full animate-ping rounded-full bg-im-accent opacity-60" />
-            <span className="relative inline-flex size-2 rounded-full bg-im-accent" />
-          </span>
+          <Image
+            src="/logo.png"
+            alt=""
+            width={22}
+            height={22}
+            priority
+            className="rounded-md"
+          />
           <h1 className="text-sm font-semibold tracking-tight text-im-text">
             Imaginar<span className="text-im-accent">IA</span>
           </h1>
         </div>
 
-        {!isEmpty && (
-          <button
-            type="button"
-            onClick={reset}
-            className="rounded-full px-3 py-1 text-xs text-im-faint transition-colors hover:text-im-text"
-          >
-            Nueva sesión
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {!isEmpty && (
+            <button
+              type="button"
+              onClick={reset}
+              className="rounded-full px-3 py-1 text-xs text-im-faint transition-colors hover:text-im-text"
+            >
+              Nueva sesión
+            </button>
+          )}
+
+          {paleta && (
+            <button
+              type="button"
+              onClick={paleta.girar}
+              // El botón muestra el color al que va a cambiar el fondo, así
+              // que la propia pieza dice lo que hace antes de pulsarla.
+              aria-label="Cambiar la paleta de colores"
+              title="Cambiar la paleta"
+              className="ml-1 flex size-7 items-center justify-center rounded-full border border-im-border transition-transform duration-200 hover:scale-110 active:scale-95"
+            >
+              <span
+                aria-hidden
+                className="size-3 rounded-full transition-colors duration-500"
+                style={{ backgroundColor: paleta.siguienteColor }}
+              />
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Conversacion */}

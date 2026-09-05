@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { BackgroundShapes } from "@/components/BackgroundShapes";
+import { PaletaProvider } from "@/components/palette";
 import { ChatContainer } from "@/components/chat/ChatContainer";
 
 interface ImaginariaDrawerProps {
@@ -122,12 +123,14 @@ export function ImaginariaDrawer({
               ) : (
                 // Misma composicion que la pagina completa, para que el panel
                 // no parezca otra aplicacion: azul, figuras y cristal.
-                <div className="relative flex flex-1 overflow-hidden">
-                  <BackgroundShapes />
-                  <div className="relative z-10 flex flex-1 flex-col">
-                    <ChatContainer autoFocus />
+                <PaletaProvider>
+                  <div className="relative flex flex-1 overflow-hidden">
+                    <BackgroundShapes />
+                    <div className="relative z-10 flex flex-1 flex-col">
+                      <ChatContainer autoFocus />
+                    </div>
                   </div>
-                </div>
+                </PaletaProvider>
               )}
             </motion.aside>
           </>
