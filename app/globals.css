@@ -49,6 +49,16 @@
   /* Error: el coral puro no llega a contraste, asi que se aclara */
   --im-danger: #ffb4b4;
 
+  /* Comic: los bocadillos y los controles son papel con trazo grueso. Al
+     vivir sobre papel claro, aqui el texto es tinta y no blanco. */
+  --im-paper: #fffdf5;
+  --im-ink: #0b0b14;
+  --im-ink-muted: #55555f;
+  /* Enfasis dentro del papel: el azul de marca da 8.4:1 sobre el papel,
+     mientras que el amarillo del acento se quedaria en 1.6:1. */
+  --im-ink-accent: #0007ff;
+  --im-stroke: 2px;
+
   /* Geometria */
   --im-radius: 1rem;
   --im-radius-sm: 0.625rem;
@@ -67,6 +77,10 @@
   --color-im-accent: var(--im-accent);
   --color-im-accent-ink: var(--im-accent-ink);
   --color-im-danger: var(--im-danger);
+  --color-im-paper: var(--im-paper);
+  --color-im-ink: var(--im-ink);
+  --color-im-ink-muted: var(--im-ink-muted);
+  --color-im-ink-accent: var(--im-ink-accent);
 
   --radius-im: var(--im-radius);
   --radius-im-sm: var(--im-radius-sm);
@@ -228,6 +242,73 @@ body {
 }
 
 /* --------------------------------------------------------------------------
+   Lenguaje cómic: papel, trazo grueso y sombra dura
+   -------------------------------------------------------------------------- */
+
+/* La sombra no se difumina: en cómic el volumen se dibuja, no se ilumina. */
+.im-comic {
+  border: var(--im-stroke) solid var(--im-ink);
+  box-shadow: 4px 4px 0 0 var(--im-ink);
+}
+
+/* Los controles se hunden al pulsarlos: el elemento avanza justo lo que mide
+   la sombra, de modo que parece que lo aplastas contra el papel. */
+.im-comic-press {
+  transition:
+    transform 90ms ease-out,
+    box-shadow 90ms ease-out;
+}
+.im-comic-press:active:not(:disabled) {
+  transform: translate(4px, 4px);
+  box-shadow: 0 0 0 0 var(--im-ink);
+}
+
+.im-bubble {
+  position: relative;
+  background: var(--im-paper);
+  color: var(--im-ink);
+}
+
+/* Cola del bocadillo: dos triángulos superpuestos. El de abajo es el trazo y
+   el de encima, ligeramente menor y desplazado, el relleno de papel; la
+   diferencia entre ambos dibuja el contorno. El de papel sube 2px para tapar
+   el borde del bocadillo y que la cola quede unida, no pegada. */
+.im-bubble::before,
+.im-bubble::after {
+  content: "";
+  position: absolute;
+  width: 0;
+  height: 0;
+  border-style: solid;
+}
+
+.im-bubble--left::before {
+  left: 22px;
+  bottom: calc(-18px - var(--im-stroke));
+  border-width: 18px 17px 0 0;
+  border-color: var(--im-ink) transparent transparent transparent;
+}
+.im-bubble--left::after {
+  left: 26px;
+  bottom: -12px;
+  border-width: 13px 12px 0 0;
+  border-color: var(--im-paper) transparent transparent transparent;
+}
+
+.im-bubble--right::before {
+  right: 22px;
+  bottom: calc(-18px - var(--im-stroke));
+  border-width: 18px 0 0 17px;
+  border-color: var(--im-ink) transparent transparent transparent;
+}
+.im-bubble--right::after {
+  right: 26px;
+  bottom: -12px;
+  border-width: 13px 0 0 12px;
+  border-color: var(--im-paper) transparent transparent transparent;
+}
+
+/* --------------------------------------------------------------------------
    Utilidades
    -------------------------------------------------------------------------- */
 
@@ -254,7 +335,7 @@ body {
   display: inline-block;
   width: 0.5ch;
   margin-left: 0.1ch;
-  background: var(--im-accent);
+  background: var(--im-ink-accent);
   animation: im-caret 1.1s steps(1, end) infinite;
   vertical-align: text-bottom;
 }
@@ -270,7 +351,7 @@ body {
   margin-top: 0.8em;
 }
 .im-prose strong {
-  color: var(--im-accent);
+  color: var(--im-ink-accent);
   font-weight: 600;
 }
 .im-prose ul,
@@ -282,22 +363,22 @@ body {
 }
 .im-prose ul { list-style: disc; }
 .im-prose ol { list-style: decimal; }
-.im-prose li::marker { color: var(--im-accent); }
+.im-prose li::marker { color: var(--im-ink-accent); }
 .im-prose a {
-  color: var(--im-accent);
+  color: var(--im-ink-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .im-prose code {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 0.875em;
-  background: rgb(255 255 255 / 0.14);
+  background: rgb(11 11 20 / 0.08);
   border-radius: 0.35rem;
   padding: 0.1em 0.35em;
 }
 .im-prose pre {
-  background: rgb(0 0 0 / 0.28);
-  border: 1px solid var(--im-glass-border);
+  background: rgb(11 11 20 / 0.06);
+  border: 1px solid rgb(11 11 20 / 0.18);
   border-radius: var(--im-radius-sm);
   padding: 0.9rem;
   overflow-x: auto;
@@ -307,9 +388,9 @@ body {
   padding: 0;
 }
 .im-prose blockquote {
-  border-left: 2px solid var(--im-accent);
+  border-left: 2px solid var(--im-ink-accent);
   padding-left: 0.9rem;
-  color: var(--im-text-muted);
+  color: var(--im-ink-muted);
 }
 
 /* --------------------------------------------------------------------------

@@ -67,7 +67,7 @@ export function ChatInput({
       }}
       className="relative"
     >
-      <div className="flex items-end gap-2 rounded-im-lg border border-im-border bg-im-glass p-1.5 transition-colors duration-200 focus-within:border-im-accent">
+      <div className="im-comic flex items-end gap-2 rounded-im-lg bg-im-paper p-1.5 transition-shadow duration-200 focus-within:shadow-[5px_5px_0_0_var(--im-ink)]">
         <textarea
           ref={textareaRef}
           value={value}
@@ -89,7 +89,7 @@ export function ChatInput({
           }}
           placeholder={placeholder}
           aria-label="Mensaje para ImaginarIA"
-          className="im-scroll max-h-[200px] flex-1 resize-none bg-transparent px-3 py-2 text-base leading-relaxed text-im-text outline-none placeholder:text-im-faint"
+          className="im-scroll max-h-[200px] min-h-9 flex-1 resize-none bg-transparent px-2.5 py-[5px] text-base leading-relaxed text-im-ink outline-none placeholder:text-im-ink-muted"
         />
 
         {isStreaming ? (
@@ -98,7 +98,7 @@ export function ChatInput({
             onClick={onStop}
             initial={{ opacity: 0, scale: 0.85 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="flex size-9 shrink-0 items-center justify-center rounded-full border border-im-border-strong text-im-muted transition-colors hover:border-im-accent hover:text-im-accent"
+            className="im-comic im-comic-press flex size-9 shrink-0 items-center justify-center rounded-full bg-im-paper text-im-ink"
             aria-label="Detener la respuesta"
           >
             <span className="size-2.5 rounded-[2px] bg-current" />
@@ -108,7 +108,7 @@ export function ChatInput({
             type="submit"
             disabled={!value.trim()}
             whileTap={{ scale: 0.94 }}
-            className="flex size-9 shrink-0 items-center justify-center rounded-full bg-im-accent text-im-accent-ink transition-all duration-200 hover:brightness-110 disabled:cursor-not-allowed disabled:bg-im-raised disabled:text-im-faint"
+            className="im-comic im-comic-press flex size-9 shrink-0 items-center justify-center rounded-full bg-im-accent text-im-ink hover:brightness-105 disabled:cursor-not-allowed disabled:bg-im-paper disabled:text-im-ink-muted disabled:shadow-none"
             aria-label="Enviar mensaje"
           >
             <svg
@@ -128,7 +128,7 @@ export function ChatInput({
       </div>
 
       {/* Oculta en móvil: sin teclado físico la indicación solo estorba. */}
-      <p className="mt-2 hidden px-1 text-[0.6875rem] text-im-faint sm:block">
+      <p className="mt-3 hidden px-1 text-[0.6875rem] text-im-faint sm:block">
         <kbd className="font-sans">Enter</kbd> envía ·{" "}
         <kbd className="font-sans">Shift + Enter</kbd> nueva línea
       </p>

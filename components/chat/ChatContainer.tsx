@@ -103,7 +103,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
               // que la propia pieza dice lo que hace antes de pulsarla.
               aria-label="Cambiar la paleta de colores"
               title="Cambiar la paleta"
-              className="ml-1 flex size-7 items-center justify-center rounded-full border border-im-border transition-transform duration-200 hover:scale-110 active:scale-95"
+              className="im-comic im-comic-press ml-1 flex size-7 items-center justify-center rounded-full bg-im-paper"
             >
               <span
                 aria-hidden
@@ -121,7 +121,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
         onScroll={handleScroll}
         className="im-scroll relative flex-1 overflow-y-auto overscroll-contain px-5"
       >
-        <div className="relative z-[1] mx-auto flex w-full max-w-2xl flex-col gap-7 py-7">
+        <div className="relative z-[1] mx-auto flex w-full max-w-2xl flex-col gap-4 py-7">
           {isEmpty ? (
             <EmptyState onPick={send} />
           ) : (
@@ -171,7 +171,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            className="im-glass absolute bottom-28 left-1/2 z-10 -translate-x-1/2 rounded-full px-3.5 py-1.5 text-xs text-im-muted transition-colors hover:text-im-text"
+            className="im-comic im-comic-press absolute bottom-28 left-1/2 z-10 -translate-x-1/2 rounded-full bg-im-paper px-3.5 py-1.5 text-xs font-medium text-im-ink"
           >
             Ir al final ↓
           </motion.button>
@@ -235,7 +235,7 @@ function EmptyState({ onPick }: { onPick: (value: string) => void }) {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.12 + index * 0.06, duration: 0.35 }}
-            className="rounded-full border border-im-border bg-im-glass px-3.5 py-2 text-left text-[0.8125rem] text-im-muted transition-colors duration-200 hover:border-im-accent hover:text-im-text"
+            className="im-comic im-comic-press rounded-full bg-im-paper px-3.5 py-2 text-left text-[0.8125rem] font-medium text-im-ink hover:bg-im-accent"
           >
             {suggestion}
           </motion.button>
