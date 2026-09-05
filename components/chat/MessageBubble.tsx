@@ -32,7 +32,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
       className={`flex w-full ${isUser ? "justify-end" : "justify-start"}`}
     >
       {isUser ? (
-        <div className="max-w-[85%] rounded-im rounded-br-md border border-im-border-strong bg-im-raised px-4 py-2.5 text-[0.9375rem] leading-relaxed text-im-text">
+        <div className="max-w-[85%] rounded-im rounded-br-md border border-im-border bg-im-raised px-4 py-2.5 text-[0.9375rem] leading-relaxed text-im-text">
           {message.content}
         </div>
       ) : (
@@ -40,7 +40,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
           <div className="mb-2 flex items-center gap-2">
             <span
               aria-hidden
-              className="size-1.5 rounded-full bg-im-accent shadow-[0_0_10px_var(--im-accent-glow)]"
+              className="size-1.5 rounded-full bg-im-accent"
             />
             <span className="text-[0.6875rem] font-medium uppercase tracking-[0.14em] text-im-faint">
               ImaginarIA

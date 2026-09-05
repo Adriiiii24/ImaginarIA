@@ -1,65 +1,69 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   ImaginarIA — sistema de diseno
+   ImaginarIA — sistema de diseño
    --------------------------------------------------------------------------
-   Todo el aspecto visual se controla desde estas variables CSS nativas. El
-   portfolio que embeba el widget puede reescribir cualquiera de ellas -sobre
-   :root o sobre el contenedor del panel- y la aplicacion entera se retematiza
-   sin tocar ni una clase de Tailwind.
+   Paleta de cinco colores sobre un azul eléctrico saturado. El azul ocupa
+   todo el fondo; los otros cuatro viven exclusivamente en las figuras
+   geométricas que flotan detrás del chat.
 
-   El prefijo --im- evita colisiones con las variables del sitio anfitrion.
+   Reglas de contraste, medidas sobre #0007FF:
+     blanco   8.49:1  -> texto general
+     amarillo 6.25:1  -> énfasis y acción principal
+     verde    6.37:1  -> disponible, reservado a las figuras
+     magenta  3.08:1  -> solo decoración
+     coral    2.73:1  -> solo decoración, NUNCA texto
+
+   Todo son variables CSS nativas: el portfolio que embeba el widget puede
+   reescribir cualquiera y retematizarlo entero sin tocar una clase.
    ========================================================================== */
 
 :root {
-  /* Superficies */
-  --im-bg: #09090e;
-  --im-surface: #121218;
-  --im-surface-raised: #1a1a24;
-  --im-border: #26262f;
-  --im-border-strong: #363644;
+  /* Fondo */
+  --im-bg: #0007ff;
+
+  /* Las cuatro figuras */
+  --im-shape-coral: #fd5959;
+  --im-shape-magenta: #e26af5;
+  --im-shape-amarillo: #f4de5e;
+  --im-shape-verde: #88f95d;
+
+  /* Cristal */
+  --im-glass: rgb(0 4 120 / 0.34);
+  --im-glass-raised: rgb(255 255 255 / 0.14);
+  --im-glass-border: rgb(255 255 255 / 0.2);
+  --im-glass-border-strong: rgb(255 255 255 / 0.34);
+  --im-glass-blur: 28px;
 
   /* Texto */
-  --im-text: #ededf2;
-  --im-text-muted: #8d8d9d;
-  --im-text-faint: #5a5a68;
+  --im-text: #ffffff;
+  --im-text-muted: rgb(255 255 255 / 0.72);
+  --im-text-faint: rgb(255 255 255 / 0.45);
 
-  /* Acento */
-  --im-accent: #8b5cf6;
-  --im-accent-bright: #a78bfa;
-  --im-accent-ink: #ffffff;
-  --im-accent-wash: rgb(139 92 246 / 0.12);
-  --im-accent-glow: rgb(139 92 246 / 0.28);
+  /* Acento: el amarillo de la paleta, el unico que aguanta como accion */
+  --im-accent: #f4de5e;
+  --im-accent-ink: #0007ff;
 
-  /* Estados */
-  --im-danger: #f87171;
+  /* Error: el coral puro no llega a contraste, asi que se aclara */
+  --im-danger: #ffb4b4;
 
   /* Geometria */
   --im-radius: 1rem;
   --im-radius-sm: 0.625rem;
-  --im-radius-lg: 1.5rem;
-
-  /* Movimiento — un unico sitio donde ajustar el ritmo de la interfaz */
-  --im-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --im-radius-lg: 1.75rem;
 }
 
-/* Mapeo de las variables a utilidades de Tailwind v4 (bg-im-surface,
-   text-im-muted, border-im-border, rounded-im...). 'inline' hace que Tailwind
-   emita var(--im-*) en lugar de copiar el valor, que es justo lo que permite
-   sobreescribirlo en caliente desde fuera. */
 @theme inline {
   --color-im-bg: var(--im-bg);
-  --color-im-surface: var(--im-surface);
-  --color-im-raised: var(--im-surface-raised);
-  --color-im-border: var(--im-border);
-  --color-im-border-strong: var(--im-border-strong);
+  --color-im-glass: var(--im-glass);
+  --color-im-raised: var(--im-glass-raised);
+  --color-im-border: var(--im-glass-border);
+  --color-im-border-strong: var(--im-glass-border-strong);
   --color-im-text: var(--im-text);
   --color-im-muted: var(--im-text-muted);
   --color-im-faint: var(--im-text-faint);
   --color-im-accent: var(--im-accent);
-  --color-im-accent-bright: var(--im-accent-bright);
   --color-im-accent-ink: var(--im-accent-ink);
-  --color-im-accent-wash: var(--im-accent-wash);
   --color-im-danger: var(--im-danger);
 
   --radius-im: var(--im-radius);
@@ -76,68 +80,187 @@ body {
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Barra de scroll discreta: la del sistema rompe la estetica del panel. */
+/* --------------------------------------------------------------------------
+   Cristal
+   -------------------------------------------------------------------------- */
+
+.im-glass {
+  background: var(--im-glass);
+  border: 1px solid var(--im-glass-border);
+  /* Solo la propiedad estandar: Lightning CSS anade los prefijos que hagan
+     falta. Declarar tambien -webkit- hace que deduplique y conserve unicamente
+     la prefijada, que Chrome no aplica, y el cristal desaparece. */
+  backdrop-filter: blur(var(--im-glass-blur)) saturate(140%);
+  /* La sombra ancla el panel sobre el azul; el brillo interior superior
+     imita el canto iluminado de una lámina de vidrio. */
+  box-shadow:
+    0 24px 70px -20px rgb(0 0 0 / 0.5),
+    inset 0 1px 0 0 rgb(255 255 255 / 0.22);
+}
+
+/* Reserva: sin soporte de backdrop-filter, el texto quedaria sobre las
+   figuras a pelo, asi que el panel pasa a ser casi opaco. */
+@supports not (backdrop-filter: blur(1px)) {
+  .im-glass {
+    background: rgb(0 5 150 / 0.92);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Figuras geométricas del fondo
+   -------------------------------------------------------------------------- */
+
+.im-shapes {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.im-shape {
+  position: absolute;
+  display: block;
+  /* will-change mantiene la animación en el compositor: sin esto, cuatro
+     figuras grandes moviéndose obligan a repintar en cada frame. */
+  will-change: transform;
+}
+
+.im-shape--circle {
+  width: 26rem;
+  height: 26rem;
+  top: -7rem;
+  left: -6rem;
+  border-radius: 9999px;
+  background: var(--im-shape-coral);
+  animation: im-float-a 19s ease-in-out infinite;
+}
+
+.im-shape--triangle {
+  width: 22rem;
+  height: 19rem;
+  top: 2%;
+  right: -4rem;
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+  background: var(--im-shape-magenta);
+  animation: im-float-b 23s ease-in-out infinite;
+}
+
+.im-shape--square {
+  width: 19rem;
+  height: 19rem;
+  bottom: -2rem;
+  left: -1rem;
+  border-radius: 2rem;
+  background: var(--im-shape-amarillo);
+  animation: im-float-c 21s ease-in-out infinite;
+}
+
+.im-shape--diamond {
+  width: 21rem;
+  height: 21rem;
+  bottom: -6rem;
+  right: -2rem;
+  border-radius: 1.5rem;
+  background: var(--im-shape-verde);
+  animation: im-float-d 26s ease-in-out infinite;
+}
+
+@keyframes im-float-a {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  50% { transform: translate(6rem, 4rem) rotate(18deg); }
+}
+@keyframes im-float-b {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  50% { transform: translate(-5rem, 5rem) rotate(-15deg); }
+}
+@keyframes im-float-c {
+  0%, 100% { transform: translate(0, 0) rotate(12deg); }
+  50% { transform: translate(6rem, -4rem) rotate(-8deg); }
+}
+@keyframes im-float-d {
+  0%, 100% { transform: translate(0, 0) rotate(45deg); }
+  50% { transform: translate(-5.5rem, -4.5rem) rotate(70deg); }
+}
+
+/* En pantallas estrechas el panel ocupa casi todo el ancho, asi que las
+   cuatro figuras acaban DETRAS del texto en vez de rodearlo. Se reducen para
+   que solo asomen por las esquinas, y el cristal se vuelve mas opaco para
+   compensar lo poco que queda de azul limpio detras. */
+@media (max-width: 40rem) {
+  :root {
+    --im-glass: rgb(0 4 110 / 0.66);
+    --im-glass-blur: 20px;
+  }
+  .im-shape--circle {
+    width: 13rem;
+    height: 13rem;
+    top: -3.5rem;
+    left: -3.5rem;
+  }
+  .im-shape--triangle {
+    width: 11rem;
+    height: 9.5rem;
+    top: 2%;
+    right: -2.5rem;
+  }
+  .im-shape--square {
+    width: 10rem;
+    height: 10rem;
+    bottom: 1%;
+    left: -2.5rem;
+  }
+  .im-shape--diamond {
+    width: 11rem;
+    height: 11rem;
+    bottom: -3.5rem;
+    right: -2.5rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Utilidades
+   -------------------------------------------------------------------------- */
+
 .im-scroll {
   scrollbar-width: thin;
-  scrollbar-color: var(--im-border-strong) transparent;
+  scrollbar-color: rgb(255 255 255 / 0.28) transparent;
 }
 .im-scroll::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 .im-scroll::-webkit-scrollbar-thumb {
-  background-color: var(--im-border-strong);
+  background-color: rgb(255 255 255 / 0.28);
   border-radius: 9999px;
 }
 .im-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* Cursor de escritura durante el streaming. */
 @keyframes im-caret {
-  0%,
-  45% {
-    opacity: 1;
-  }
-  50%,
-  95% {
-    opacity: 0.15;
-  }
+  0%, 45% { opacity: 1; }
+  50%, 95% { opacity: 0.15; }
 }
 .im-caret {
   display: inline-block;
   width: 0.5ch;
   margin-left: 0.1ch;
-  background: var(--im-accent-bright);
+  background: var(--im-accent);
   animation: im-caret 1.1s steps(1, end) infinite;
   vertical-align: text-bottom;
 }
 
-/* Halo ambiental del fondo. Puramente decorativo. */
-.im-aurora::before {
-  content: "";
-  position: absolute;
-  inset: -40% -20% auto;
-  height: 60%;
-  background: radial-gradient(
-    60% 60% at 50% 0%,
-    var(--im-accent-glow) 0%,
-    transparent 70%
-  );
-  filter: blur(60px);
-  pointer-events: none;
-  z-index: 0;
-}
+/* --------------------------------------------------------------------------
+   Tipografía del mensaje del asistente
+   -------------------------------------------------------------------------- */
 
-/* Tipografia del mensaje del asistente. Deliberadamente sobria: el prompt
-   restringe el formato a prosa, negritas y listas cortas. */
 .im-prose {
-  line-height: 1.7;
+  line-height: 1.65;
 }
 .im-prose > * + * {
-  margin-top: 0.85em;
+  margin-top: 0.8em;
 }
 .im-prose strong {
-  color: var(--im-accent-bright);
+  color: var(--im-accent);
   font-weight: 600;
 }
 .im-prose ul,
@@ -145,32 +268,26 @@ body {
   padding-left: 1.15rem;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.35rem;
 }
-.im-prose ul {
-  list-style: disc;
-}
-.im-prose ol {
-  list-style: decimal;
-}
-.im-prose li::marker {
-  color: var(--im-accent);
-}
+.im-prose ul { list-style: disc; }
+.im-prose ol { list-style: decimal; }
+.im-prose li::marker { color: var(--im-accent); }
 .im-prose a {
-  color: var(--im-accent-bright);
+  color: var(--im-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .im-prose code {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 0.875em;
-  background: var(--im-accent-wash);
+  background: rgb(255 255 255 / 0.14);
   border-radius: 0.35rem;
   padding: 0.1em 0.35em;
 }
 .im-prose pre {
-  background: var(--im-bg);
-  border: 1px solid var(--im-border);
+  background: rgb(0 0 0 / 0.28);
+  border: 1px solid var(--im-glass-border);
   border-radius: var(--im-radius-sm);
   padding: 0.9rem;
   overflow-x: auto;
@@ -185,11 +302,14 @@ body {
   color: var(--im-text-muted);
 }
 
-/* Respeta a quien tenga reducido el movimiento en el sistema operativo.
-   Framer Motion lo detecta por su cuenta, pero las animaciones CSS no. */
+/* --------------------------------------------------------------------------
+   Movimiento reducido
+   -------------------------------------------------------------------------- */
+
 @media (prefers-reduced-motion: reduce) {
+  .im-shape,
   .im-caret {
-    animation: none;
+    animation: none !important;
   }
   *,
   *::before,

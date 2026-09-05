@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { BackgroundShapes } from "@/components/BackgroundShapes";
 import { ChatContainer } from "@/components/chat/ChatContainer";
 
 interface ImaginariaDrawerProps {
@@ -57,11 +58,11 @@ export function ImaginariaDrawer({
         onClick={() => setIsOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={isOpen}
-        className="group inline-flex items-center gap-2 rounded-full border border-im-border-strong bg-im-surface px-4 py-2.5 text-sm font-medium text-im-text transition-colors duration-200 hover:border-im-accent"
+        className="group inline-flex items-center gap-2 rounded-full border border-im-border-strong bg-im-glass px-4 py-2.5 text-sm font-medium text-im-text transition-colors duration-200 hover:border-im-accent"
       >
         <span
           aria-hidden
-          className="size-1.5 rounded-full bg-im-accent shadow-[0_0_10px_var(--im-accent-glow)]"
+          className="size-1.5 rounded-full bg-im-accent"
         />
         {label}
       </button>
@@ -94,7 +95,7 @@ export function ImaginariaDrawer({
                 type="button"
                 onClick={() => setIsOpen(false)}
                 aria-label="Cerrar"
-                className="absolute right-4 top-3.5 z-20 flex size-7 items-center justify-center rounded-full text-im-faint transition-colors hover:bg-im-surface hover:text-im-text"
+                className="absolute right-4 top-3.5 z-20 flex size-7 items-center justify-center rounded-full text-im-faint transition-colors hover:text-im-text"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -119,7 +120,14 @@ export function ImaginariaDrawer({
                   sandbox="allow-scripts allow-same-origin allow-forms"
                 />
               ) : (
-                <ChatContainer autoFocus />
+                // Misma composicion que la pagina completa, para que el panel
+                // no parezca otra aplicacion: azul, figuras y cristal.
+                <div className="relative flex flex-1 overflow-hidden">
+                  <BackgroundShapes />
+                  <div className="relative z-10 flex flex-1 flex-col">
+                    <ChatContainer autoFocus />
+                  </div>
+                </div>
               )}
             </motion.aside>
           </>

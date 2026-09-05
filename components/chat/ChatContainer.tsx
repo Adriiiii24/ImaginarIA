@@ -66,7 +66,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
       : null;
 
   return (
-    <div className={`relative flex h-full flex-col bg-im-bg ${className}`}>
+    <div className={`relative flex h-full flex-col ${className}`}>
       {/* Cabecera */}
       <header className="z-10 flex shrink-0 items-center justify-between border-b border-im-border px-5 py-3.5">
         <div className="flex items-center gap-2.5">
@@ -75,7 +75,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
             <span className="relative inline-flex size-2 rounded-full bg-im-accent" />
           </span>
           <h1 className="text-sm font-semibold tracking-tight text-im-text">
-            Imaginar<span className="text-im-accent-bright">IA</span>
+            Imaginar<span className="text-im-accent">IA</span>
           </h1>
         </div>
 
@@ -83,7 +83,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
           <button
             type="button"
             onClick={reset}
-            className="rounded-full px-3 py-1 text-xs text-im-faint transition-colors hover:bg-im-surface hover:text-im-text"
+            className="rounded-full px-3 py-1 text-xs text-im-faint transition-colors hover:text-im-text"
           >
             Nueva sesión
           </button>
@@ -94,7 +94,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="im-scroll im-aurora relative flex-1 overflow-y-auto overscroll-contain px-5"
+        className="im-scroll relative flex-1 overflow-y-auto overscroll-contain px-5"
       >
         <div className="relative z-[1] mx-auto flex w-full max-w-2xl flex-col gap-7 py-7">
           {isEmpty ? (
@@ -146,7 +146,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            className="absolute bottom-28 left-1/2 z-10 -translate-x-1/2 rounded-full border border-im-border-strong bg-im-raised px-3.5 py-1.5 text-xs text-im-muted shadow-lg transition-colors hover:text-im-text"
+            className="im-glass absolute bottom-28 left-1/2 z-10 -translate-x-1/2 rounded-full px-3.5 py-1.5 text-xs text-im-muted transition-colors hover:text-im-text"
           >
             Ir al final ↓
           </motion.button>
@@ -154,7 +154,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
       </AnimatePresence>
 
       {/* Composer */}
-      <div className="z-10 shrink-0 border-t border-im-border bg-im-bg px-5 py-4">
+      <div className="z-10 shrink-0 border-t border-im-border px-4 py-4 sm:px-5">
         <div className="mx-auto w-full max-w-2xl">
           <ChatInput
             onSend={send}
@@ -198,7 +198,7 @@ function EmptyState({ onPick }: { onPick: (value: string) => void }) {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.12 + index * 0.06, duration: 0.35 }}
-            className="rounded-full border border-im-border bg-im-surface px-3.5 py-2 text-left text-[0.8125rem] text-im-muted transition-colors duration-200 hover:border-im-accent hover:text-im-text"
+            className="rounded-full border border-im-border bg-im-glass px-3.5 py-2 text-left text-[0.8125rem] text-im-muted transition-colors duration-200 hover:border-im-accent hover:text-im-text"
           >
             {suggestion}
           </motion.button>
