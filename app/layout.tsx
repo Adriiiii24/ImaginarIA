@@ -13,13 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ImaginarIA — Socio creativo radical",
+  title: "ImaginarIA — Lluvia de ideas a dos voces",
   description:
-    "Un chat que no te da la respuesta obvia: desmonta la premisa que estabas dando por buena y cruza disciplinas para desbloquear la idea.",
+    "Un chat que solo hace una cosa: ayudarte a crear ideas. Pregunta antes de proponer y construye contigo, turno a turno, hasta cerrarlas.",
   openGraph: {
-    title: "ImaginarIA — Socio creativo radical",
+    title: "ImaginarIA — Lluvia de ideas a dos voces",
     description:
-      "Generación de ideas disruptivas y eliminación de bloqueos creativos.",
+      "Desde desatascar una novela hasta ponerle nombre a tu perro. Pregunta primero, propone después.",
     type: "website",
   },
 };
