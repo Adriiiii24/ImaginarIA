@@ -1,5 +1,4 @@
 import { BackgroundShapes } from "@/components/BackgroundShapes";
-import { Personaje } from "@/components/Personaje";
 import { PaletaProvider } from "@/components/palette";
 import { ChatContainer } from "@/components/chat/ChatContainer";
 
@@ -16,17 +15,11 @@ export default function Home() {
       <PaletaProvider>
         <BackgroundShapes />
 
-      {/* z-10 sobre las figuras. La altura se limita para que en pantallas
-          altas el panel siga leyéndose como una tarjeta flotante y no como
-          una columna estirada. */}
-        {/* Envoltorio para que el personaje se posicione respecto al panel y
-            no respecto a la pagina. El panel va por encima (z-10) y le tapa
-            las piernas; el personaje queda en z-0 dentro de este contenedor. */}
-        <div className="relative z-10 flex h-full max-h-[44rem] w-full max-w-xl">
-          <Personaje />
-          <div className="im-glass relative z-10 flex w-full flex-col overflow-hidden rounded-im-lg">
-            <ChatContainer autoFocus />
-          </div>
+        {/* z-10 sobre las figuras. La altura se limita para que en pantallas
+            altas el panel siga leyéndose como una tarjeta flotante y no como
+            una columna estirada. */}
+        <div className="im-glass relative z-10 flex h-full max-h-[44rem] w-full max-w-xl flex-col overflow-hidden rounded-im-lg">
+          <ChatContainer autoFocus />
         </div>
       </PaletaProvider>
     </main>
