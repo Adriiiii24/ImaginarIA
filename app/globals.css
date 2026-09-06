@@ -265,8 +265,18 @@ body {
 
 .im-bubble {
   position: relative;
-  background: var(--im-paper);
+  /* El relleno es una variable para que la cola lo herede sin duplicar
+     reglas: cambiar el color del bocadillo cambia tambien su punta. */
+  --im-relleno: var(--im-paper);
+  background: var(--im-relleno);
   color: var(--im-ink);
+}
+
+/* Los mensajes de quien escribe van en el amarillo de la paleta; los de
+   ImaginarIA en papel. Es la diferencia que se ve de un vistazo, antes que la
+   alineacion o la cola. Tinta sobre amarillo da 14:1. */
+.im-bubble--user {
+  --im-relleno: var(--im-accent);
 }
 
 /* Cola del bocadillo: dos triángulos superpuestos. El de abajo es el trazo y
@@ -292,7 +302,7 @@ body {
   left: 26px;
   bottom: -12px;
   border-width: 13px 12px 0 0;
-  border-color: var(--im-paper) transparent transparent transparent;
+  border-color: var(--im-relleno) transparent transparent transparent;
 }
 
 .im-bubble--right::before {
@@ -305,7 +315,7 @@ body {
   right: 26px;
   bottom: -12px;
   border-width: 13px 0 0 12px;
-  border-color: var(--im-paper) transparent transparent transparent;
+  border-color: var(--im-relleno) transparent transparent transparent;
 }
 
 /* --------------------------------------------------------------------------

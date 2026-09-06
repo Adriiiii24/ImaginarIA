@@ -33,7 +33,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
       className={`mb-4 flex w-full ${isUser ? "justify-end" : "justify-start"}`}
     >
       {isUser ? (
-        <div className="im-comic im-bubble im-bubble--right max-w-[85%] rounded-im px-4 py-2.5 text-[0.9375rem] leading-relaxed">
+        <div className="im-comic im-bubble im-bubble--right im-bubble--user max-w-[85%] rounded-im px-4 py-2.5 text-[0.9375rem] font-medium leading-relaxed">
           {message.content}
         </div>
       ) : (
