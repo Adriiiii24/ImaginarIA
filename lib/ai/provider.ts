@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import type {
   ChatProvider,
   ProviderChunk,
@@ -39,6 +40,27 @@ export class ProviderUnconfiguredError extends Error {
   }
 }
 
+/**
+ * El proveedor cerro el stream sin emitir una sola palabra.
+ *
+ * Pasa con los filtros de seguridad (finishReason SAFETY o un blockReason
+ * sobre el propio prompt) y con los modelos que razonan cuando el
+ * presupuesto de tokens se les va entero en pensar. Sin detectarlo, el
+ * usuario recibe un "done" sin texto: un bocadillo vacio.
+ */
+export class EmptyResponseError extends Error {
+  constructor(
+    readonly vendor: string,
+    readonly finishReason?: string,
+  ) {
+    super(
+      vendor + " termino sin texto" +
+        (finishReason ? " (finishReason: " + finishReason + ")" : ""),
+    );
+    this.name = "EmptyResponseError";
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Parser SSE compartido                                                      */
 /* -------------------------------------------------------------------------- */
@@ -50,7 +72,7 @@ export class ProviderUnconfiguredError extends Error {
  * mitad o traer varios juntos. De ahi el buffer explicito. Es el bug clasico
  * de las integraciones de streaming escritas a mano.
  */
-async function* readSse(
+export async function* readSse(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<string> {
   const reader = body.getReader();
@@ -92,7 +114,13 @@ async function* readSse(
  */
 const RETRIABLE = new Set([500, 502, 503, 504]);
 
-const MAX_ATTEMPTS = envNum("AI_MAX_ATTEMPTS", 3);
+/**
+ * Lo maximo que se espera antes de reintentar contra el mismo proveedor. Si
+ * pide mas (un Retry-After de 30 s no es raro), no se espera dentro de la
+ * peticion con el usuario mirando unos puntos suspensivos: se pasa al
+ * siguiente de la cadena, que para eso esta.
+ */
+const MAX_RETRY_DELAY_MS = 4_000;
 
 /**
  * Lanza la peticion reintentando los fallos transitorios.
@@ -110,36 +138,118 @@ async function openStream(
   init: RequestInit,
   vendor: string,
 ): Promise<Response> {
+  // Por peticion y no al cargar el modulo, igual que el resto del entorno. Al
+  // menos uno: con 0 no se llamaria a nadie y el fallo seria un misterio.
+  const maxAttempts = Math.max(1, envNum("AI_MAX_ATTEMPTS", 3));
   let lastDetail = "";
   let lastStatus = 0;
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    const response = await fetch(url, init);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const isLastAttempt = attempt === maxAttempts;
+    // Backoff exponencial con jitter para no sincronizar reintentos entre
+    // instancias.
+    let delay = 400 * 2 ** (attempt - 1) + Math.random() * 250;
+
+    let response: Response;
+    try {
+      response = await connect(url, init, vendor);
+    } catch (error) {
+      // Sin respuesta que leer: conexion rechazada o cortada. Merece otro
+      // intento; un timeout no, porque repetirlo es volver a esperar lo mismo.
+      const retriable = error instanceof ProviderError && error.status === 502;
+      if (!retriable || isLastAttempt) throw error;
+      await sleep(delay, undefined, { signal: init.signal ?? undefined });
+      continue;
+    }
+
     if (response.ok && response.body) return response;
 
     lastStatus = response.status;
     lastDetail = await response.text().catch(() => "");
 
-    const isLastAttempt = attempt === MAX_ATTEMPTS;
     if (!RETRIABLE.has(response.status) || isLastAttempt) break;
 
-    // Respetamos Retry-After si el proveedor lo indica; si no, backoff
-    // exponencial con jitter para no sincronizar reintentos entre instancias.
-    // Number(null) es 0, de ahi el > 0: sin el, una cabecera ausente se
-    // interpretaria como "espera 0 ms" y anularia el backoff.
+    // Respetamos Retry-After si el proveedor lo indica. Number(null) es 0, de
+    // ahi el > 0: sin el, una cabecera ausente se interpretaria como "espera
+    // 0 ms" y anularia el backoff.
     const retryAfter = Number(response.headers.get("retry-after"));
-    const delay =
-      Number.isFinite(retryAfter) && retryAfter > 0
-        ? retryAfter * 1_000
-        : 400 * 2 ** (attempt - 1) + Math.random() * 250;
+    if (Number.isFinite(retryAfter) && retryAfter > 0) delay = retryAfter * 1_000;
+    if (delay > MAX_RETRY_DELAY_MS) break;
 
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    if (init.signal?.aborted) break;
+    // Cancelable: si el usuario pulsa detener durante la espera, se corta
+    // aqui con un AbortError en vez de agotar el backoff.
+    await sleep(delay, undefined, { signal: init.signal ?? undefined });
   }
 
   throw new ProviderError(
     vendor + " respondio " + lastStatus + ": " + lastDetail.slice(0, 500),
     lastStatus,
+    vendor,
+  );
+}
+
+/**
+ * fetch con un tope de espera hasta las cabeceras.
+ *
+ * Un proveedor colgado no devuelve error: simplemente no contesta, y la
+ * peticion se queda esperando hasta que la plataforma mata la funcion. El
+ * tope cubre solo la conexion -las APIs de streaming envian las cabeceras
+ * enseguida- y no la generacion, que puede durar lo que tenga que durar.
+ *
+ * Los dos fallos se traducen a ProviderError con un status de pasarela, para
+ * que la cadena pase al siguiente proveedor: 504 si no contesto a tiempo, 502
+ * si ni siquiera hubo conexion.
+ */
+async function connect(
+  url: string,
+  init: RequestInit,
+  vendor: string,
+): Promise<Response> {
+  const timeoutMs = envNum("AI_CONNECT_TIMEOUT_MS", 20_000);
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), timeoutMs);
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, timeout.signal])
+    : timeout.signal;
+
+  try {
+    return await fetch(url, { ...init, signal });
+  } catch (error) {
+    // Cancelado por el usuario: se propaga tal cual, no es culpa de nadie.
+    if (init.signal?.aborted) throw error;
+    if (timeout.signal.aborted) {
+      throw new ProviderError(
+        vendor + " no respondio en " + timeoutMs + " ms",
+        504,
+        vendor,
+      );
+    }
+    throw new ProviderError(
+      vendor + " inalcanzable: " + (error instanceof Error ? error.message : String(error)),
+      502,
+      vendor,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Algunos proveedores notifican un fallo DENTRO del stream, con un evento
+ * {"error": {...}} despues de haber respondido 200. Ignorarlo convertiria el
+ * fallo en una respuesta cortada sin explicacion.
+ */
+function streamError(
+  vendor: string,
+  error: { message?: string; code?: unknown },
+): ProviderError {
+  // Gemini manda el codigo HTTP en 'code'; si no hay uno util, 502: el fallo
+  // es del otro lado, y asi la cadena puede caer al siguiente proveedor.
+  const status =
+    typeof error.code === "number" && error.code >= 400 ? error.code : 502;
+  return new ProviderError(
+    vendor + " fallo a mitad del stream: " + (error.message ?? "sin detalle"),
+    status,
     vendor,
   );
 }
@@ -150,9 +260,16 @@ async function openStream(
 
 interface GeminiStreamChunk {
   candidates?: Array<{
-    content?: { parts?: Array<{ text?: string }> };
+    content?: {
+      // 'thought' marca las partes de razonamiento. No llegan salvo que se
+      // pida includeThoughts, pero si algun dia llegan no deben mostrarse.
+      parts?: Array<{ text?: string; thought?: boolean }>;
+    };
     finishReason?: string;
   }>;
+  /** Presente cuando se bloquea el PROMPT: entonces no hay ni candidato. */
+  promptFeedback?: { blockReason?: string };
+  error?: { message?: string; code?: number };
   usageMetadata?: {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
@@ -232,10 +349,17 @@ class GeminiProvider implements ChatProvider {
         continue; // keep-alive o fragmento no-JSON: ignorar sin romper.
       }
 
+      if (parsed.error) throw streamError(this.vendor, parsed.error);
+
       const candidate = parsed.candidates?.[0];
       const text = candidate?.content?.parts
-        ?.map((part) => part.text ?? "")
+        ?.filter((part) => !part.thought)
+        .map((part) => part.text ?? "")
         .join("");
+      // Sin candidato y con blockReason, lo que se ha bloqueado es la
+      // peticion. Se registra como finishReason para que la traza lo diga.
+      const finishReason =
+        candidate?.finishReason ?? parsed.promptFeedback?.blockReason;
 
       // Los tokens de razonamiento se facturan como salida aunque nunca se
       // vean. Si solo contamos candidatesTokenCount, Langfuse infravalora el
@@ -248,8 +372,8 @@ class GeminiProvider implements ChatProvider {
         total: parsed.usageMetadata.totalTokenCount,
       };
 
-      if (text || usage || candidate?.finishReason) {
-        yield { text, usage, finishReason: candidate?.finishReason };
+      if (text || usage || finishReason) {
+        yield { text, usage, finishReason };
       }
     }
   }
@@ -264,6 +388,7 @@ interface GroqStreamChunk {
     delta?: { content?: string | null };
     finish_reason?: string | null;
   }>;
+  error?: { message?: string; code?: unknown };
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -343,6 +468,8 @@ class OpenAICompatibleProvider implements ChatProvider {
       } catch {
         continue;
       }
+
+      if (parsed.error) throw streamError(this.vendor, parsed.error);
 
       const choice = parsed.choices?.[0];
       const usage: TokenUsage | undefined = parsed.usage && {
@@ -488,11 +615,14 @@ export function resolveProviderChain(): ChatProvider[] {
 /**
  * Decide si merece la pena pasar al siguiente proveedor de la cadena.
  *
- * Solo los fallos de disponibilidad: cuota agotada (429) y saturacion o caida
- * (5xx). Un 400 o un 404 son errores nuestros -payload mal formado, modelo
- * inexistente- y reintentarlos en otro proveedor solo esconde el bug.
+ * Los fallos de disponibilidad: cuota agotada (429) y saturacion, caida o
+ * timeout (5xx). Tambien la respuesta vacia: otro modelo, con otros filtros y
+ * otro presupuesto de razonamiento, suele contestar sin problema. Un 400 o un
+ * 404 son errores nuestros -payload mal formado, modelo inexistente- y
+ * reintentarlos en otro proveedor solo esconde el bug.
  */
 export function shouldFailover(error: unknown): boolean {
+  if (error instanceof EmptyResponseError) return true;
   if (!(error instanceof ProviderError)) return false;
   const status = error.status ?? 0;
   return status === 429 || status >= 500;

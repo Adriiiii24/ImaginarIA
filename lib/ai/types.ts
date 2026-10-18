@@ -12,6 +12,14 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   createdAt?: number;
+  /**
+   * Traza de Langfuse que genero esta respuesta. Solo en mensajes del
+   * asistente, y solo si las trazas estan activas: sin ella no hay a que
+   * enlazar una valoracion.
+   */
+  traceId?: string;
+  /** Valoracion del usuario sobre esta respuesta, si la ha dado. */
+  feedback?: FeedbackValue;
 }
 
 /** Lo que el cliente envia a POST /api/chat */
@@ -19,6 +27,15 @@ export interface ChatRequestBody {
   messages: Array<Pick<ChatMessage, "role" | "content">>;
   /** Agrupa varios turnos en una misma sesion de Langfuse. */
   sessionId?: string;
+}
+
+/** 1: la respuesta le ha servido. 0: no. Es un score BOOLEAN en Langfuse. */
+export type FeedbackValue = 0 | 1;
+
+/** Lo que el cliente envia a POST /api/feedback */
+export interface FeedbackRequestBody {
+  traceId: string;
+  value: FeedbackValue;
 }
 
 /**
@@ -39,9 +56,13 @@ export type StreamEvent =
 
 export type ErrorCode =
   | "bad_request"
+  | "payload_too_large"
   | "rate_limited"
   | "provider_error"
   | "provider_unconfigured"
+  // El proveedor cerro el stream sin una sola palabra: filtro de seguridad,
+  // tokens agotados razonando... Para el usuario es "no me ha contestado".
+  | "empty_response"
   | "aborted"
   | "internal";
 

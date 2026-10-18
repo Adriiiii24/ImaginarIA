@@ -270,6 +270,10 @@ body {
   --im-relleno: var(--im-paper);
   background: var(--im-relleno);
   color: var(--im-ink);
+  /* Una URL o una palabra sin espacios no cabe en ninguna linea y se salia
+     del bocadillo. 'anywhere' y no 'break-word': solo el primero cuenta al
+     calcular el ancho minimo, y el bocadillo vive dentro de un flex. */
+  overflow-wrap: anywhere;
 }
 
 /* Los mensajes de quien escribe van en el amarillo de la paleta; los de
@@ -341,13 +345,24 @@ body {
   0%, 45% { opacity: 1; }
   50%, 95% { opacity: 0.15; }
 }
-.im-caret {
+
+/* Cursor de escritura mientras llegan tokens.
+
+   Es un pseudo-elemento del ultimo bloque y no un span detras del Markdown.
+   El span quedaba FUERA del ultimo parrafo: abria una linea nueva bajo el
+   texto y, sin contenido ni altura, no se veia. El bocadillo crecia una linea
+   vacia durante la respuesta y encogia de golpe al terminar. Asi va pegado a
+   la ultima palabra. En una lista, al final de su ultimo elemento. */
+.im-prose--streaming > :last-child:not(ul, ol)::after,
+.im-prose--streaming > :is(ul, ol):last-child > li:last-child::after {
+  content: "";
   display: inline-block;
   width: 0.5ch;
-  margin-left: 0.1ch;
+  height: 1.05em;
+  margin-left: 0.15ch;
+  vertical-align: -0.15em;
   background: var(--im-ink-accent);
   animation: im-caret 1.1s steps(1, end) infinite;
-  vertical-align: text-bottom;
 }
 
 /* --------------------------------------------------------------------------
@@ -409,7 +424,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .im-shape,
-  .im-caret {
+  .im-prose--streaming ::after {
     animation: none !important;
   }
   *,

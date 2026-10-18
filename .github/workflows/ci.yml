@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Solo lee el repositorio: un workflow no necesita más permisos que eso.
+permissions:
+  contents: read
+
+# Un push nuevo a la misma rama cancela la ejecución anterior: solo importa el
+# último estado.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      # typegen genera los tipos de rutas (LayoutProps...) que un checkout
+      # limpio no tiene; sin él, tsc fallaría antes de mirar el código.
+      - run: npm run typecheck
+      # Sin claves: los tests simulan proveedores y Langfuse, y un fetch sin
+      # simular falla en lugar de salir a la red.
+      - run: npm test
+      - run: npm run build

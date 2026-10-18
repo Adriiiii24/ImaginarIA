@@ -10,6 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Tailwind](https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
 [![Langfuse](https://img.shields.io/badge/Langfuse-LLMOps-0A0A0A?style=flat-square)](https://langfuse.com)
+[![CI](https://github.com/Adriiiii24/imaginaria/actions/workflows/ci.yml/badge.svg)](https://github.com/Adriiiii24/imaginaria/actions/workflows/ci.yml)
 
 </div>
 
@@ -88,8 +89,9 @@ curl http://localhost:3000/api/chat
  "fallback":false,"tracing":true}
 ```
 
-`"unconfigured"` significa que falta la clave; el `POST` devolverá `503`, no
-`500`. ✅
+`"unconfigured"` significa que falta la clave, y `problem` dice cuál; el `POST`
+devolverá `503`, no `500`, con un mensaje para el visitante (el detalle técnico
+va al log, no a la pantalla). ✅
 
 > ⚠️ **Los identificadores de modelo se retiran sin aviso.** `gemini-2.5-flash`
 > ya devuelve `404` a las claves nuevas, y `llama-3.3-70b-versatile` desapareció
@@ -143,18 +145,25 @@ GROQ_API_KEY=...
 GOOGLE_AI_API_KEY=...
 ```
 
-El primero atiende. Si devuelve `429` o `5xx`, la petición **pasa al siguiente
-sin que el usuario se entere**. Un proveedor sin clave se omite en silencio, así
-que añadir respaldo es pegar una clave más. 🔗
+El primero atiende. Si devuelve `429` o `5xx`, no contesta en 20 segundos o
+cierra el stream sin decir una palabra, la petición **pasa al siguiente sin que
+el usuario se entere**. Un proveedor sin clave se omite en silencio, así que
+añadir respaldo es pegar una clave más. 🔗
 
-**Tres reglas que lo hacen seguro y no un parche:**
+**Cuatro reglas que lo hacen seguro y no un parche:**
 
 - 🚦 **Solo se cambia antes del primer token.** Si el cliente ya lee texto,
   reempezar produciría una respuesta con dos comienzos pegados.
-- 🎯 **Solo por indisponibilidad** (`429`, `5xx`). Un `400` o `404` es bug
-  nuestro y reintentarlo en otro proveedor solo lo esconde.
+- 🎯 **Solo por indisponibilidad** (`429`, `5xx`, timeout) **o silencio**
+  (respuesta vacía: filtro de seguridad, tokens agotados razonando). Un `400` o
+  `404` es bug nuestro y reintentarlo en otro proveedor solo lo esconde.
+- ⏳ **Nada de esperas largas con el usuario delante.** Un `503` se reintenta
+  contra el mismo proveedor con backoff, pero si pide un `Retry-After` de más de
+  4 segundos se cede el turno al siguiente.
 - 📝 **La traza registra quién atendió de verdad**, no quién se preveía, para
-  que el coste se calcule con la tarifa correcta.
+  que el coste se calcule con la tarifa correcta. Y quién falló antes
+  (`failovers` en los metadatos): un principal que vive agotado no pasa
+  desapercibido detrás de un respaldo que contesta bien.
 
 ### 🧩 Qué poner en la cadena
 
@@ -195,7 +204,21 @@ llega como `{"type":"error"}` y el cliente conserva el texto parcial en lugar de
 romperse. 🛟
 
 Los errores **previos** al stream sí son códigos normales: `400` (validación),
-`429` (rate limit, con `Retry-After`), `503` (sin configurar).
+`413` (cuerpo de más de 256 KB), `429` (rate limit, con `Retry-After`), `503`
+(sin configurar).
+
+Y un stream que se cierra sin `done` ni `error` —la plataforma mató la función
+en `maxDuration`, se cayó la red— el cliente lo trata como **respuesta
+cortada** y ofrece reintentar, en lugar de darla por buena. ✂️
+
+### 🪟 Qué ve el modelo
+
+El historial viaja entero en cada turno, así que se acota: los últimos **40
+mensajes y 24.000 caracteres**. Una conversación más larga no se rechaza —antes
+devolvía `400` y se quedaba bloqueada—: sigue, y el modelo deja de ver lo más
+antiguo. Por el camino se descartan los turnos vacíos (una respuesta detenida
+antes del primer token) y se funden dos turnos seguidos del mismo rol (un
+mensaje que falló y el siguiente), que algunos proveedores rechazan.
 
 ---
 
@@ -207,13 +230,31 @@ aplicación funciona idéntica** y solo pierde las trazas. 🎛️
 
 Tres detalles que evitan los fallos habituales:
 
-- 🚿 **`flushAsync()` antes de cerrar el stream.** El SDK encola eventos por
-  lotes; en serverless el proceso se congela al cerrar la respuesta y sin flush
-  las trazas se pierden **en silencio**. Es el error nº 1 al integrar Langfuse.
+- 🚿 **Flush con `after()`, después de cerrar la respuesta.** El SDK encola
+  eventos; en serverless el proceso se congela al cerrar la respuesta y sin
+  flush las trazas se pierden **en silencio** (el error nº 1 al integrar
+  Langfuse). Pero vaciar *antes* de cerrar dejaba al usuario esperando la ida y
+  vuelta a Langfuse con la respuesta ya completa. `after()` lo hace después, y
+  en Vercel mantiene viva la función con `waitUntil`; donde no existe, se vacía
+  en línea como antes.
 - 🐢 **Import dinámico.** El SDK solo se carga si hay credenciales, para no
   pagarlo en el arranque en frío.
 - 🧵 **`sessionId`.** Uno por conversación, así los turnos se agrupan en el
   dashboard en vez de aparecer sueltos.
+
+### 👍 Valoraciones: la otra mitad de la traza
+
+Cada respuesta lleva dos pulgares junto a la firma. El voto va a
+`POST /api/feedback` y queda como score `user-feedback` (`BOOLEAN`) en la traza
+de esa respuesta, con un id estable: cambiar de opinión **sustituye** el voto,
+no lo suma.
+
+Como cada generación está enlazada a su versión del prompt, Langfuse agrega los
+votos **por versión**. «¿La 3.0.0 ayuda más que la 2.0.0?» deja de ser una
+impresión y pasa a ser un dato. 📈
+
+Sin trazas no hay pulgares: la respuesta no trae `traceId` y no habría a qué
+enlazar el voto. Copiar la respuesta, en cambio, está siempre.
 
 ### 📝 Prompt Management: Langfuse manda, el repo es la red
 
@@ -222,13 +263,18 @@ El system prompt real vive en Langfuse (`imaginaria-system`, etiqueta
 entra si Langfuse no responde, no está configurado o no encuentra la etiqueta.
 
 ```bash
-npm run prompt:publish          # 📤 publica el prompt del repo como versión nueva
+npm run prompt:publish               # 📤 publica el prompt del repo, si ha cambiado
+npm run prompt:publish -- --dry-run  # 👀 dice qué publicaría, sin tocar nada
 # y en .env:
 LANGFUSE_PROMPT_LABEL=production
 ```
 
+Es **idempotente**: si la etiqueta ya apunta a ese mismo texto, no crea una
+versión gemela. Relanzarlo «por si acaso» ya no ensucia el historial de
+versiones ni reparte las métricas entre copias idénticas.
+
 **Cada traza registra de dónde salió el prompt:** `promptSource` y
-`promptVersion` (`lf-3` para Langfuse, `2.0.0` para el repo). Si un día la
+`promptVersion` (`lf-3` para Langfuse, `3.0.0` para el repo). Si un día la
 calidad cae, lo primero que quieres saber es qué texto leía el modelo. 🔍
 
 **Dos formas de iterar — elige una:**
@@ -250,21 +296,17 @@ import { ImaginariaDrawer } from "@/components/ImaginariaDrawer";
 <ImaginariaDrawer src="https://imaginaria.tudominio.com" />;
 ```
 
-⚠️ Para que el iframe funcione, añade en el `next.config.ts` **de ImaginarIA**:
+⚠️ Para que el iframe funcione, declara el origen del portfolio en el
+despliegue **de ImaginarIA**:
 
-```ts
-async headers() {
-  return [{
-    source: "/:path*",
-    headers: [{
-      key: "Content-Security-Policy",
-      // 🔒 Lo único que impide que cualquier web embeba tu chat
-      //    y te consuma la cuota de API.
-      value: "frame-ancestors 'self' https://tudominio.com",
-    }],
-  }];
-}
+```bash
+FRAME_ANCESTORS=https://tudominio.com https://www.tudominio.com
 ```
+
+Por defecto solo el propio origen puede embeber la app (`frame-ancestors
+'self'`, ya configurado en [`next.config.ts`](next.config.ts)). 🔒 Es lo que
+impide que cualquier web meta tu chat en un iframe y te consuma la cuota de API.
+Se lee al compilar: cambiarla exige redesplegar.
 
 ### Opción B — mismo proyecto
 
@@ -287,15 +329,21 @@ Copia `components/`, `lib/` y `app/api/chat/`, y monta el panel sin `src`:
 | [`lib/ai/types.ts`](lib/ai/types.ts) | Contratos compartidos cliente ↔ servidor |
 | [`lib/observability/langfuse.ts`](lib/observability/langfuse.ts) | Trazas y Prompt Management tolerantes a fallo |
 | [`app/api/chat/route.ts`](app/api/chat/route.ts) | Valida, limita, traza y hace streaming |
+| [`app/api/feedback/route.ts`](app/api/feedback/route.ts) | Valoraciones → scores de Langfuse |
+| [`lib/chat/history.ts`](lib/chat/history.ts) | Ventana de historial: qué ve el modelo |
+| [`lib/chat/validate.ts`](lib/chat/validate.ts) | Validación de los cuerpos de la API |
+| [`lib/rate-limit.ts`](lib/rate-limit.ts) | Rate limiting en memoria |
+| [`lib/http.ts`](lib/http.ts) | Cuerpo con tope de bytes, errores y `after()` |
 
 **💬 Chat**
 
 | Fichero | Responsabilidad |
 |---|---|
-| [`components/chat/useImaginaria.ts`](components/chat/useImaginaria.ts) | Estado de conversación y lectura del stream |
+| [`components/chat/useImaginaria.ts`](components/chat/useImaginaria.ts) | Estado de conversación: enviar, detener, reintentar, valorar |
+| [`lib/chat/stream-client.ts`](lib/chat/stream-client.ts) | Lectura del NDJSON en el navegador, cortes incluidos |
 | [`components/chat/ChatContainer.tsx`](components/chat/ChatContainer.tsx) | Composición, scroll y estado vacío |
-| [`components/chat/MessageBubble.tsx`](components/chat/MessageBubble.tsx) | Un turno, como bocadillo de cómic |
-| [`components/chat/ChatInput.tsx`](components/chat/ChatInput.tsx) | Composer autoajustable |
+| [`components/chat/MessageBubble.tsx`](components/chat/MessageBubble.tsx) | Un turno, como bocadillo de cómic, con copiar y valorar |
+| [`components/chat/ChatInput.tsx`](components/chat/ChatInput.tsx) | Composer autoajustable, con tope y `Esc` para detener |
 | [`lib/suggestions.ts`](lib/suggestions.ts) | Repertorio de ideas, 4 sorteadas por visita |
 
 **🎨 Aspecto**
@@ -308,6 +356,13 @@ Copia `components/`, `lib/` y `app/api/chat/`, y monta el panel sin `src`:
 | [`components/BrandMark.tsx`](components/BrandMark.tsx) | La marca, dibujada con las mismas figuras |
 | [`components/ImaginariaDrawer.tsx`](components/ImaginariaDrawer.tsx) | Panel lateral para el portfolio |
 
+**🧪 Calidad**
+
+| Fichero | Responsabilidad |
+|---|---|
+| [`__tests__/`](__tests__/) | Vitest: streaming, failover, validación y el hook del chat, con proveedores y Langfuse simulados. Ni un token gastado: un `fetch` sin simular falla en vez de salir a la red |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Lint, tipos, tests y build en cada push |
+
 ---
 
 ## ⚠️ Límites conocidos
@@ -316,6 +371,7 @@ Copia `components/`, `lib/` y `app/api/chat/`, y monta el panel sin `src`:
 |---|---|
 | 🧯 | **Rate limiting en memoria y por instancia.** Frena el abuso trivial, pero en serverless el límite efectivo se multiplica por instancias. Para algo real: `@upstash/ratelimit` con Redis |
 | 💾 | **Sin persistencia.** Recargar vacía la conversación. Deliberado para una demo; añadir historial implica base de datos y decisiones de privacidad |
+| 🪟 | **Memoria acotada.** El modelo ve los últimos 40 mensajes / 24.000 caracteres. Una conversación más larga sigue, pero olvida el principio |
 | 🔓 | **Sin autenticación.** Cualquiera con la URL consume tu cuota. El rate limit y la CSP son la única contención |
 
 ---
@@ -327,6 +383,9 @@ npm run dev              # 🔧 desarrollo
 npm run build            # 📦 build de producción
 npm start                # ▶️  servir el build
 npm run lint             # 🧹 ESLint
+npm run typecheck        # 🔍 tipos (genera antes los de las rutas)
+npm test                 # 🧪 tests, una pasada
+npm run test:watch       # 👀 tests en modo watch
 npm run prompt:publish   # 📤 publicar el prompt en Langfuse
 ```
 

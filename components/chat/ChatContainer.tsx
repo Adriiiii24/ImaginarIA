@@ -29,7 +29,8 @@ interface ChatContainerProps {
  * composicion de los tres bloques de la interfaz.
  */
 export function ChatContainer({ className = "", autoFocus }: ChatContainerProps) {
-  const { messages, status, error, send, stop, reset } = useImaginaria();
+  const { messages, status, error, canRetry, send, retry, stop, rate, reset } =
+    useImaginaria();
   // null cuando no hay PaletaProvider por encima: el boton simplemente no sale.
   const paleta = usePaleta();
 
@@ -138,6 +139,7 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
                     key={message.id}
                     message={message}
                     isStreaming={message.id === streamingId}
+                    onFeedback={rate}
                   />
                 ))}
             </AnimatePresence>
@@ -148,19 +150,37 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
           {status === "streaming" && lastMessage?.content === "" && <Thinking />}
 
           {error && (
-            <motion.p
+            <motion.div
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               role="alert"
-              className="rounded-im-sm border border-im-danger/30 bg-im-danger/10 px-4 py-3 text-sm text-im-danger"
+              className="flex items-center justify-between gap-3 rounded-im-sm border border-im-danger/30 bg-im-danger/10 px-4 py-3 text-sm text-im-danger"
             >
-              {error}
-            </motion.p>
+              <p>{error}</p>
+              {canRetry && (
+                <button
+                  type="button"
+                  onClick={retry}
+                  className="im-comic im-comic-press shrink-0 rounded-full bg-im-paper px-3 py-1 text-xs font-medium text-im-ink"
+                >
+                  Reintentar
+                </button>
+              )}
+            </motion.div>
           )}
 
           <div ref={bottomRef} />
         </div>
       </div>
+
+      {/* Para lectores de pantalla: cada respuesta se anuncia entera cuando
+          termina. Como región viva, la lista la leería a trozos, token a
+          token, en decenas de avisos. */}
+      <p className="sr-only" aria-live="polite">
+        {status !== "streaming" && lastMessage?.role === "assistant"
+          ? spokenText(lastMessage.content)
+          : ""}
+      </p>
 
       {/* Volver al final */}
       <AnimatePresence>
@@ -194,6 +214,14 @@ export function ChatContainer({ className = "", autoFocus }: ChatContainerProps)
 }
 
 /* -------------------------------------------------------------------------- */
+
+/**
+ * La respuesta sin las marcas de Markdown, para el anuncio en voz alta: un
+ * lector de pantalla leería "asterisco asterisco" antes de cada negrita. De
+ * los enlaces se queda el texto.
+ */
+const spokenText = (markdown: string) =>
+  markdown.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[*_`#>~]/g, "");
 
 function EmptyState({ onPick }: { onPick: (value: string) => void }) {
   // Cuatro de una lista larga, sorteadas en cada carga de la página.
@@ -247,10 +275,13 @@ function EmptyState({ onPick }: { onPick: (value: string) => void }) {
 
 function Thinking() {
   return (
-    <div className="flex items-center gap-1.5" aria-label="Pensando">
+    // role=status: un aria-label en un div sin rol no lo anuncia nadie.
+    <div role="status" className="flex items-center gap-1.5">
+      <span className="sr-only">ImaginarIA está pensando…</span>
       {[0, 1, 2].map((index) => (
         <motion.span
           key={index}
+          aria-hidden
           className="size-1.5 rounded-full bg-im-accent"
           animate={{ opacity: [0.25, 1, 0.25] }}
           transition={{

@@ -117,8 +117,13 @@ export function ImaginariaDrawer({
                   title="ImaginarIA"
                   className="size-full border-0"
                   // El iframe apunta a nuestro propio despliegue: le damos lo
-                  // justo para funcionar y nada mas.
-                  sandbox="allow-scripts allow-same-origin allow-forms"
+                  // justo para funcionar y nada mas. Las popups son para los
+                  // enlaces de las respuestas, que abren en pestana nueva;
+                  // sin ellas, pulsarlos no haria nada.
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                  // El boton de copiar respuesta, desde otro origen, necesita
+                  // permiso explicito para escribir en el portapapeles.
+                  allow="clipboard-write"
                 />
               ) : (
                 // Misma composicion que la pagina completa, para que el panel

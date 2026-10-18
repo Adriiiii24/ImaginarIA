@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import type { ChatStatus } from "@/components/chat/useImaginaria";
+import { MAX_MESSAGE_CHARS } from "@/lib/chat/history";
 
 interface ChatInputProps {
   onSend: (value: string) => void;
@@ -13,6 +14,16 @@ interface ChatInputProps {
 }
 
 const MAX_TEXTAREA_HEIGHT = 200;
+
+/** Desde aquí se enseña cuánto queda: antes solo sería ruido. */
+const COUNTER_FROM = Math.round(MAX_MESSAGE_CHARS * 0.8);
+
+/**
+ * ¿Hay puntero fino, y por tanto casi seguro teclado físico? En táctil,
+ * enfocar el campo por código abre el teclado virtual, que tapa media
+ * pantalla: justo la mitad donde está la respuesta que se iba a leer.
+ */
+const hasFinePointer = () => window.matchMedia("(pointer: fine)").matches;
 
 /**
  * Barra de comandos inferior.
@@ -41,13 +52,19 @@ export function ChatInput({
     node.style.height = Math.min(node.scrollHeight, MAX_TEXTAREA_HEIGHT) + "px";
   }, [value]);
 
+  // Foco inicial, solo con teclado físico: ver hasFinePointer.
+  useEffect(() => {
+    if (autoFocus && hasFinePointer()) textareaRef.current?.focus();
+  }, [autoFocus]);
+
   // Devolver el foco al terminar la respuesta. Sin esto, quien envia pulsando
   // el boton se queda con el foco EN el boton: lee la respuesta, empieza a
   // escribir y no aparece nada. Es la forma mas sigilosa de que un chat
-  // parezca roto.
+  // parezca roto. En tactil no hace falta (se escribe tocando el campo) y
+  // abriria el teclado encima de la respuesta.
   const wasStreaming = useRef(false);
   useEffect(() => {
-    if (wasStreaming.current && !isStreaming) {
+    if (wasStreaming.current && !isStreaming && hasFinePointer()) {
       textareaRef.current?.focus();
     }
     wasStreaming.current = isStreaming;
@@ -59,6 +76,8 @@ export function ChatInput({
     setValue("");
   };
 
+  const atLimit = value.length >= MAX_MESSAGE_CHARS;
+
   return (
     <form
       onSubmit={(event) => {
@@ -67,14 +86,42 @@ export function ChatInput({
       }}
       className="relative"
     >
-      <div className="im-comic flex items-end gap-2 rounded-im-lg bg-im-paper p-1.5 transition-shadow duration-200 focus-within:shadow-[5px_5px_0_0_var(--im-ink)]">
+      <div className="im-comic relative flex items-end gap-2 rounded-im-lg bg-im-paper p-1.5 transition-shadow duration-200 focus-within:shadow-[5px_5px_0_0_var(--im-ink)]">
+        {/* El mismo tope que aplica el servidor: mejor verlo venir que
+            recibir un error al enviar. maxLength corta también lo pegado. */}
+        {value.length >= COUNTER_FROM && (
+          <span
+            aria-hidden
+            className={`pointer-events-none absolute -top-3 right-5 rounded-full border-2 border-im-ink px-2 text-[0.625rem] font-medium leading-4 tabular-nums text-im-ink ${
+              atLimit ? "bg-im-accent" : "bg-im-paper"
+            }`}
+          >
+            {value.length} / {MAX_MESSAGE_CHARS}
+          </span>
+        )}
+        {/* El contador leído en cada pulsación sería ruido: solo se anuncia
+            el tope, que es cuando deja de entrar texto. */}
+        <span className="sr-only" aria-live="polite">
+          {atLimit ? "Has llegado al máximo de " + MAX_MESSAGE_CHARS + " caracteres." : ""}
+        </span>
+
         <textarea
           ref={textareaRef}
           value={value}
-          autoFocus={autoFocus}
           rows={1}
+          maxLength={MAX_MESSAGE_CHARS}
+          // En móvil, la tecla Intro del teclado virtual dice "Enviar".
+          enterKeyHint="send"
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
+            if (event.key === "Escape" && isStreaming) {
+              // Sin propagar: en el panel lateral, Escape también lo cierra.
+              // El primero detiene la respuesta; el segundo ya cierra.
+              event.preventDefault();
+              event.stopPropagation();
+              onStop();
+              return;
+            }
             // Enter envia, Shift+Enter salta de linea. isComposing evita
             // cortar la entrada de teclados con IME (japones, chino, coreano)
             // justo cuando el usuario confirma un caracter.
@@ -127,10 +174,19 @@ export function ChatInput({
         )}
       </div>
 
-      {/* Oculta en móvil: sin teclado físico la indicación solo estorba. */}
+      {/* Oculta en móvil: sin teclado físico la indicación solo estorba.
+          Mientras responde, cuenta lo único que se puede hacer: detenerla. */}
       <p className="mt-3 hidden px-1 text-[0.6875rem] text-im-faint sm:block">
-        <kbd className="font-sans">Enter</kbd> envía ·{" "}
-        <kbd className="font-sans">Shift + Enter</kbd> nueva línea
+        {isStreaming ? (
+          <>
+            <kbd className="font-sans">Esc</kbd> detiene la respuesta
+          </>
+        ) : (
+          <>
+            <kbd className="font-sans">Enter</kbd> envía ·{" "}
+            <kbd className="font-sans">Shift + Enter</kbd> nueva línea
+          </>
+        )}
       </p>
     </form>
   );
