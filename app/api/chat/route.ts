@@ -1,5 +1,5 @@
-import type { NextRequest } from "next/server";
 import {
+  EmptyResponseError,
   ProviderError,
   ProviderUnconfiguredError,
   resolveProviderChain,
@@ -9,14 +9,18 @@ import { buildSystemPrompt } from "@/lib/ai/system-prompt";
 import {
   getObservability,
   resolveSystemPrompt,
+  type FailoverRecord,
 } from "@/lib/observability/langfuse";
 import type {
-  ChatRequestBody,
+  ChatProvider,
   ErrorCode,
   StreamEvent,
   TokenUsage,
 } from "@/lib/ai/types";
+import { MAX_CHAT_BODY_BYTES, validateChatRequest } from "@/lib/chat/validate";
 import { env, envNum } from "@/lib/env";
+import { errorResponse, readJsonBody, runAfterResponse } from "@/lib/http";
+import { clientKey, createRateLimiter } from "@/lib/rate-limit";
 
 /**
  * POST /api/chat
@@ -37,121 +41,14 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /* -------------------------------------------------------------------------- */
-/* Limites                                                                    */
-/* -------------------------------------------------------------------------- */
-
-const MAX_MESSAGES = 40;
-const MAX_MESSAGE_CHARS = 4_000;
-const MAX_TOTAL_CHARS = 24_000;
-
-/* -------------------------------------------------------------------------- */
 /* Rate limiting                                                              */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Ventana fija en memoria.
- *
- * ADVERTENCIA HONESTA: esto es por instancia. En serverless con varias
- * instancias activas el limite efectivo se multiplica por el numero de
- * instancias, y se reinicia en cada arranque en frio. Es suficiente para
- * frenar el abuso trivial de un chat de portfolio -y evitar que alguien te
- * funda la cuota de la API en una tarde-, pero si el trafico crece, sustituye
- * este mapa por @upstash/ratelimit con Redis, que es lo unico que da un
- * limite real y distribuido.
- */
-const RATE_LIMIT_MAX = envNum("RATE_LIMIT_REQUESTS", 20);
-const RATE_LIMIT_WINDOW_MS = envNum("RATE_LIMIT_WINDOW_SECONDS", 60) * 1_000;
-
-const hits = new Map<string, { count: number; resetAt: number }>();
-
-function rateLimit(key: string): { ok: boolean; retryAfter: number } {
-  const now = Date.now();
-  const entry = hits.get(key);
-
-  if (!entry || now > entry.resetAt) {
-    hits.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-    // Purga barata: sin esto el mapa crece indefinidamente en una instancia
-    // de larga vida.
-    if (hits.size > 10_000) {
-      for (const [k, v] of hits) if (now > v.resetAt) hits.delete(k);
-    }
-    return { ok: true, retryAfter: 0 };
-  }
-
-  entry.count += 1;
-  return {
-    ok: entry.count <= RATE_LIMIT_MAX,
-    retryAfter: Math.ceil((entry.resetAt - now) / 1_000),
-  };
-}
-
-function clientKey(request: NextRequest): string {
-  const forwarded = request.headers.get("x-forwarded-for");
-  return forwarded?.split(",")[0]?.trim() || "anonymous";
-}
-
-/* -------------------------------------------------------------------------- */
-/* Validacion                                                                 */
-/* -------------------------------------------------------------------------- */
-
-type Validated = Required<Pick<ChatRequestBody, "messages">> & {
-  sessionId?: string;
-};
-
-/**
- * Validacion a mano en lugar de Zod: el contrato son dos campos y no merece
- * una dependencia mas. Si el payload crece, migra a Zod y comparte el esquema
- * con el cliente.
- */
-function validate(payload: unknown): Validated | string {
-  if (typeof payload !== "object" || payload === null) {
-    return "El cuerpo debe ser un objeto JSON.";
-  }
-
-  const { messages, sessionId } = payload as Record<string, unknown>;
-
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return "Se requiere un array 'messages' no vacío.";
-  }
-  if (messages.length > MAX_MESSAGES) {
-    return "Conversación demasiado larga (máximo " + MAX_MESSAGES + " mensajes).";
-  }
-
-  const clean: Validated["messages"] = [];
-  let totalChars = 0;
-
-  for (const message of messages) {
-    if (typeof message !== "object" || message === null) {
-      return "Cada mensaje debe ser un objeto.";
-    }
-    const { role, content } = message as Record<string, unknown>;
-
-    if (role !== "user" && role !== "assistant") {
-      return "El rol debe ser 'user' o 'assistant'.";
-    }
-    if (typeof content !== "string" || content.trim().length === 0) {
-      return "Cada mensaje necesita un 'content' de texto no vacío.";
-    }
-    if (content.length > MAX_MESSAGE_CHARS) {
-      return "Mensaje demasiado largo (máximo " + MAX_MESSAGE_CHARS + " caracteres).";
-    }
-
-    totalChars += content.length;
-    clean.push({ role, content });
-  }
-
-  if (totalChars > MAX_TOTAL_CHARS) {
-    return "El historial excede el máximo de " + MAX_TOTAL_CHARS + " caracteres.";
-  }
-  if (clean[clean.length - 1].role !== "user") {
-    return "El último mensaje debe ser del usuario.";
-  }
-
-  return {
-    messages: clean,
-    sessionId: typeof sessionId === "string" ? sessionId.slice(0, 128) : undefined,
-  };
-}
+// En memoria y por instancia: ver la advertencia en lib/rate-limit.ts.
+const limiter = createRateLimiter({
+  max: envNum("RATE_LIMIT_REQUESTS", 20),
+  windowMs: envNum("RATE_LIMIT_WINDOW_SECONDS", 60) * 1_000,
+});
 
 /* -------------------------------------------------------------------------- */
 /* Utilidades de respuesta                                                    */
@@ -163,21 +60,41 @@ const encoder = new TextEncoder();
 const line = (event: StreamEvent): Uint8Array =>
   encoder.encode(JSON.stringify(event) + "\n");
 
-function errorResponse(
-  code: ErrorCode,
-  message: string,
-  status: number,
-  headers: HeadersInit = {},
-): Response {
-  return Response.json({ error: { code, message } }, { status, headers });
+/** Lo que ve el usuario para cada fallo durante el stream. */
+function describeFailure(error: unknown): { code: ErrorCode; message: string } {
+  if (error instanceof EmptyResponseError) {
+    return {
+      code: "empty_response",
+      message: "Me he quedado en blanco. ¿Me lo cuentas de otra forma?",
+    };
+  }
+
+  // Distinguimos la cuota agotada del resto de fallos. Es el error mas
+  // probable en una demo publica sobre el nivel gratuito (Gemini free tier
+  // permite 20 peticiones por minuto), y decirle al usuario "reintenta en unos
+  // segundos" cuando el proveedor pide un minuto entero solo consigue que
+  // reintente y vuelva a fallar.
+  if (error instanceof ProviderError && error.status === 429) {
+    return {
+      code: "rate_limited",
+      message: "Me he quedado sin cupo por ahora. Dame un minuto y seguimos.",
+    };
+  }
+
+  // No filtramos el detalle del proveedor al cliente: puede contener trazas
+  // internas. Queda en los logs del servidor.
+  return {
+    code: error instanceof ProviderError ? "provider_error" : "internal",
+    message: "Se me ha cortado a mitad de frase. Prueba otra vez en unos segundos.",
+  };
 }
 
 /* -------------------------------------------------------------------------- */
 /* Handler                                                                    */
 /* -------------------------------------------------------------------------- */
 
-export async function POST(request: NextRequest): Promise<Response> {
-  const limit = rateLimit(clientKey(request));
+export async function POST(request: Request): Promise<Response> {
+  const limit = limiter.hit(clientKey(request));
   if (!limit.ok) {
     return errorResponse(
       "rate_limited",
@@ -187,25 +104,36 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
-  let payload: unknown;
-  try {
-    payload = await request.json();
-  } catch {
-    return errorResponse("bad_request", "JSON inválido.", 400);
+  const body = await readJsonBody(request, MAX_CHAT_BODY_BYTES);
+  if (!body.ok) {
+    return body.error === "too_large"
+      ? errorResponse(
+          "payload_too_large",
+          "Eso es demasiado texto para mí de una vez.",
+          413,
+        )
+      : errorResponse("bad_request", "JSON inválido.", 400);
   }
 
-  const validated = validate(payload);
+  const validated = validateChatRequest(body.value);
   if (typeof validated === "string") {
     return errorResponse("bad_request", validated, 400);
   }
 
-  let chain;
+  let chain: ChatProvider[];
   try {
     chain = resolveProviderChain();
   } catch (error) {
     if (error instanceof ProviderUnconfiguredError) {
-      // 503 y no 500: el servicio esta bien, le falta configuracion.
-      return errorResponse("provider_unconfigured", error.message, 503);
+      // 503 y no 500: el servicio esta bien, le falta configuracion. El
+      // detalle (que clave falta) es para quien despliega, no para quien
+      // visita: va al log y a GET /api/chat.
+      console.error("[api/chat] sin proveedor configurado:", error.message);
+      return errorResponse(
+        "provider_unconfigured",
+        "Ahora mismo no tengo cabeza para ideas: me falta configuración. Vuelve en un rato.",
+        503,
+      );
     }
     throw error;
   }
@@ -235,27 +163,48 @@ export async function POST(request: NextRequest): Promise<Response> {
     once: true,
   });
 
+  // Las trazas se envian DESPUES de cerrar la respuesta. Vaciarlas antes de
+  // cerrar el stream -como se hacia- tenia al cliente esperando la ida y
+  // vuelta a Langfuse con la respuesta ya completa: el boton de detener
+  // seguia ahi y no se podia enviar el siguiente mensaje. 'settled' evita que
+  // el vaciado se adelante si el cliente se va a mitad: espera a que la
+  // generacion quede registrada, sea como sea que termine.
+  let settle = () => {};
+  const settled = new Promise<void>((resolve) => (settle = resolve));
+  const flushDeferred =
+    observability.enabled &&
+    runAfterResponse(() => settled.then(() => observability.flush()));
+
   const stream = new ReadableStream<Uint8Array>({
     async start(sink) {
+      // Si el cliente ya se ha ido, escribir en el stream lanza. No es un
+      // fallo nuestro y no debe tapar el registro de lo ocurrido.
+      const send = (event: StreamEvent) => {
+        try {
+          sink.enqueue(line(event));
+        } catch {}
+      };
+
       let text = "";
       let usage: TokenUsage | undefined;
       let finishReason: string | undefined;
 
-      // Proveedor que finalmente atiende. Puede no ser el primero de la
-      // cadena si este se queda sin cuota o esta saturado.
-      let servedBy = primary;
+      // Proveedor que esta atendiendo. Puede no ser el primero de la cadena
+      // si este se queda sin cuota o esta saturado; y es a el a quien se
+      // atribuye la generacion, tambien si se cancela o falla.
+      let current = primary;
+      const failovers: FailoverRecord[] = [];
 
       try {
-        sink.enqueue(
-          line({
-            type: "meta",
-            traceId: generation.traceId,
-            model: primary.model,
-          }),
-        );
+        send({
+          type: "meta",
+          traceId: generation.traceId,
+          model: primary.model,
+        });
 
         for (let index = 0; index < chain.length; index++) {
           const provider = chain[index];
+          current = provider;
           const isLast = index === chain.length - 1;
           // Solo podemos cambiar de proveedor mientras no hayamos emitido
           // nada: si el cliente ya esta leyendo texto, reempezar con otro
@@ -275,20 +224,28 @@ export async function POST(request: NextRequest): Promise<Response> {
                 generation.markFirstToken();
                 emitted = true;
                 text += chunk.text;
-                sink.enqueue(line({ type: "delta", text: chunk.text }));
+                send({ type: "delta", text: chunk.text });
               }
             }
 
-            servedBy = provider;
+            if (!emitted) {
+              throw new EmptyResponseError(provider.vendor, finishReason);
+            }
             break;
           } catch (error) {
             if (isLast || emitted || !shouldFailover(error)) throw error;
 
+            const reason = error instanceof Error ? error.message : String(error);
             console.warn(
               "[api/chat] " + provider.vendor + " no disponible, pasando a " +
                 chain[index + 1].vendor,
-              error instanceof Error ? error.message : error,
+              reason,
             );
+            failovers.push({
+              vendor: provider.vendor,
+              model: provider.model,
+              reason: reason.slice(0, 200),
+            });
             // Descartamos el uso parcial del proveedor fallido para no
             // atribuirle tokens al que si conteste.
             usage = undefined;
@@ -300,17 +257,16 @@ export async function POST(request: NextRequest): Promise<Response> {
           output: text,
           usage,
           finishReason,
-          model: servedBy.model,
-          vendor: servedBy.vendor,
+          model: current.model,
+          vendor: current.vendor,
+          failovers,
         });
-        sink.enqueue(
-          line({
-            type: "done",
-            finishReason,
-            model: servedBy.model,
-            vendor: servedBy.vendor,
-          }),
-        );
+        send({
+          type: "done",
+          finishReason,
+          model: current.model,
+          vendor: current.vendor,
+        });
       } catch (error) {
         const aborted =
           controller.signal.aborted ||
@@ -323,44 +279,34 @@ export async function POST(request: NextRequest): Promise<Response> {
             output: text,
             usage,
             finishReason: "aborted",
+            model: current.model,
+            vendor: current.vendor,
+            failovers,
           });
         } else {
-          console.error("[api/chat] fallo durante el stream", error);
-          generation.fail(error);
+          const empty = error instanceof EmptyResponseError;
+          if (empty) console.warn("[api/chat]", error.message);
+          else console.error("[api/chat] fallo durante el stream", error);
 
-          const isProviderError = error instanceof ProviderError;
-          const status = isProviderError ? error.status : undefined;
-
-          // Distinguimos la cuota agotada del resto de fallos. Es el error mas
-          // probable en una demo publica sobre el nivel gratuito (Gemini free
-          // tier permite 20 peticiones por minuto), y decirle al usuario
-          // "reintenta en unos segundos" cuando el proveedor pide un minuto
-          // entero solo consigue que reintente y vuelva a fallar.
-          const quotaExhausted = status === 429;
-
-          const code: ErrorCode = quotaExhausted
-            ? "rate_limited"
-            : isProviderError
-              ? "provider_error"
-              : "internal";
-
-          sink.enqueue(
-            line({
-              type: "error",
-              code,
-              // No filtramos el detalle del proveedor al cliente: puede
-              // contener trazas internas. Queda en los logs del servidor.
-              message: quotaExhausted
-                ? "Me he quedado sin cupo por ahora. Dame un minuto y seguimos."
-                : "Se me ha cortado a mitad de frase. Prueba otra vez en unos segundos.",
-            }),
-          );
+          generation.fail(error, {
+            // Que el modelo no conteste no es un fallo del sistema.
+            level: empty ? "WARNING" : "ERROR",
+            output: text,
+            model: current.model,
+            vendor: current.vendor,
+            failovers,
+          });
+          send({ type: "error", ...describeFailure(error) });
         }
       } finally {
-        // Imprescindible: en serverless el proceso se congela en cuanto se
-        // cierra la respuesta y los eventos encolados se perderian.
-        await observability.flush();
-        sink.close();
+        settle();
+        // Sin after() disponible, se vacia aqui, como ultimo recurso: en
+        // serverless el proceso se congela al cerrar la respuesta y los
+        // eventos encolados se perderian en silencio.
+        if (!flushDeferred) await observability.flush();
+        try {
+          sink.close();
+        } catch {}
       }
     },
 
@@ -392,13 +338,16 @@ export async function GET(): Promise<Response> {
   // Devuelve la cadena completa: asi se ve de un vistazo si el respaldo que
   // creias configurado se esta omitiendo por falta de clave.
   let chain: Array<{ vendor: string; model: string }> = [];
+  let problem: string | undefined;
   try {
     chain = resolveProviderChain().map((provider) => ({
       vendor: provider.vendor,
       model: provider.model,
     }));
-  } catch {
-    chain = [];
+  } catch (error) {
+    // El POST no le cuenta al visitante que clave falta; esto es para quien
+    // despliega, y no expone ningun valor.
+    problem = error instanceof Error ? error.message : String(error);
   }
 
   return Response.json(
@@ -408,6 +357,7 @@ export async function GET(): Promise<Response> {
       chain,
       fallback: chain.length > 1,
       tracing: (await getObservability()).enabled,
+      ...(problem ? { problem } : {}),
     },
     { headers: { "Cache-Control": "no-store" } },
   );

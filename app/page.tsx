@@ -1,3 +1,4 @@
+import { MotionConfig } from "framer-motion";
 import { BackgroundShapes } from "@/components/BackgroundShapes";
 import { PaletaProvider } from "@/components/palette";
 import { ChatContainer } from "@/components/chat/ChatContainer";
@@ -12,16 +13,21 @@ import { ChatContainer } from "@/components/chat/ChatContainer";
 export default function Home() {
   return (
     <main className="relative flex flex-1 items-center justify-center overflow-hidden p-3 sm:p-6">
-      <PaletaProvider>
-        <BackgroundShapes />
+      {/* framer-motion ignora prefers-reduced-motion si no se le pide: con
+          "user", quien lo tiene activo deja de ver desplazamientos y escalas
+          (los fundidos se quedan). */}
+      <MotionConfig reducedMotion="user">
+        <PaletaProvider>
+          <BackgroundShapes />
 
-        {/* z-10 sobre las figuras. La altura se limita para que en pantallas
-            altas el panel siga leyéndose como una tarjeta flotante y no como
-            una columna estirada. */}
-        <div className="im-glass relative z-10 flex h-full max-h-[44rem] w-full max-w-xl flex-col overflow-hidden rounded-im-lg">
-          <ChatContainer autoFocus />
-        </div>
-      </PaletaProvider>
+          {/* z-10 sobre las figuras. La altura se limita para que en pantallas
+              altas el panel siga leyéndose como una tarjeta flotante y no como
+              una columna estirada. */}
+          <div className="im-glass relative z-10 flex h-full max-h-[44rem] w-full max-w-xl flex-col overflow-hidden rounded-im-lg">
+            <ChatContainer autoFocus />
+          </div>
+        </PaletaProvider>
+      </MotionConfig>
     </main>
   );
 }

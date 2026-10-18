@@ -1,7 +1,8 @@
 /**
  * Publica en Langfuse Prompt Management el system prompt del repositorio.
  *
- *   npm run prompt:publish
+ *   npm run prompt:publish               publica, si el texto ha cambiado
+ *   npm run prompt:publish -- --dry-run  dice que haria, sin tocar nada
  *
  * Flujo de trabajo previsto: el prompt se edita y se revisa en el repositorio
  * (queda en el historial de git, con su diff y su revision), y este script lo
@@ -9,12 +10,19 @@
  * A partir de ahi la aplicacion lo sirve desde Langfuse y el del repositorio
  * queda como red de seguridad.
  *
+ * Es idempotente: si la version con esa etiqueta ya tiene exactamente este
+ * texto, no publica nada. Relanzarlo "por si acaso" creaba versiones
+ * identicas, y el historial de Langfuse dejaba de decir cuando cambio algo de
+ * verdad (y las metricas por version se repartian entre gemelas).
+ *
  * Para ajustes rapidos en caliente puedes editarlo directamente en la interfaz
  * de Langfuse, pero entonces el repositorio deja de reflejar lo que corre en
  * produccion: recuerda traerte el cambio de vuelta.
  */
 import { readFileSync } from "node:fs";
 import { Langfuse } from "langfuse";
+
+const dryRun = process.argv.includes("--dry-run");
 
 const leerEnv = (ruta) => {
   try {
@@ -59,6 +67,17 @@ if (!texto || !version || !nombre) {
   process.exit(1);
 }
 
+// La extraccion copia el texto TAL CUAL esta escrito en el fichero. Con una
+// interpolacion o una secuencia de escape, lo publicado no seria lo que la
+// aplicacion ve al evaluar el literal: mejor negarse que publicar otra cosa.
+if (texto.includes("${") || texto.includes("\\")) {
+  console.error(
+    "El prompt usa ${...} o secuencias de escape (\\). Este script no las " +
+      "evalua y publicaria un texto distinto del que usa la aplicacion.",
+  );
+  process.exit(1);
+}
+
 const etiqueta = env.LANGFUSE_PROMPT_LABEL || "production";
 
 const lf = new Langfuse({
@@ -66,6 +85,57 @@ const lf = new Langfuse({
   secretKey: env.LANGFUSE_SECRET_KEY,
   baseUrl: env.LANGFUSE_BASE_URL || "https://cloud.langfuse.com",
 });
+
+let actual = null;
+// El SDK escribe su propio "Error while fetching prompt", con la traza entera,
+// aunque el error se capture. Aqui un 404 es lo normal en la primera
+// publicacion, asi que se silencia solo mientras dura esta consulta.
+const consoleError = console.error;
+console.error = () => {};
+try {
+  actual = await lf.getPrompt(nombre, undefined, {
+    label: etiqueta,
+    type: "text",
+    // Siempre la version real del servidor, nunca una copia en cache.
+    cacheTtlSeconds: 0,
+  });
+} catch (error) {
+  console.error = consoleError;
+  // "No encontrado" es la primera publicacion, o una etiqueta que todavia no
+  // apunta a ninguna version. Cualquier otra cosa (credenciales, red) no:
+  // seguir diria "no hay nada publicado" cuando en realidad no se sabe.
+  const mensaje = error instanceof Error ? error.message : String(error);
+  if (!/not found/i.test(mensaje)) {
+    console.error("No se ha podido consultar el prompt actual en Langfuse:", mensaje);
+    process.exit(1);
+  }
+} finally {
+  console.error = consoleError;
+}
+
+if (actual?.prompt === texto) {
+  console.log(
+    "Sin cambios: la version " + actual.version + " de " + nombre +
+      " (" + etiqueta + ") ya tiene este texto. No se publica nada.",
+  );
+  await lf.shutdownAsync();
+  process.exit(0);
+}
+
+if (dryRun) {
+  console.log("--dry-run: se publicaria una version nueva.");
+  console.log("  nombre    :", nombre);
+  console.log("  etiqueta  :", etiqueta);
+  console.log(
+    "  ahora     :",
+    actual
+      ? "version " + actual.version + ", " + actual.prompt.length + " caracteres"
+      : "(ninguna version con esta etiqueta)",
+  );
+  console.log("  nuevo     : v" + version + ", " + texto.length + " caracteres");
+  await lf.shutdownAsync();
+  process.exit(0);
+}
 
 const prompt = await lf.createPrompt({
   name: nombre,

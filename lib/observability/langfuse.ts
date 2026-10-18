@@ -3,7 +3,7 @@ import type {
   LangfuseGenerationClient,
   LangfusePromptClient,
 } from "langfuse";
-import type { TokenUsage } from "@/lib/ai/types";
+import type { FeedbackValue, TokenUsage } from "@/lib/ai/types";
 import { env } from "@/lib/env";
 import {
   IMAGINARIA_SYSTEM_PROMPT,
@@ -35,21 +35,43 @@ import {
 const isEnabled = (): boolean =>
   Boolean(env("LANGFUSE_PUBLIC_KEY") && env("LANGFUSE_SECRET_KEY"));
 
+/** Un proveedor de la cadena que fallo y cedio el turno al siguiente. */
+export interface FailoverRecord {
+  vendor: string;
+  model: string;
+  reason: string;
+}
+
+/** Quien atendio de verdad y quien fallo antes. */
+interface ServedBy {
+  /** Proveedor y modelo que atendieron, si la cadena cayo a un respaldo. */
+  model?: string;
+  vendor?: string;
+  failovers?: FailoverRecord[];
+}
+
 /** Handle de una generacion en curso. Ninguno de sus metodos lanza. */
 export interface GenerationHandle {
   /** Id de la traza, o null si la observabilidad esta desactivada. */
   readonly traceId: string | null;
   /** Marca el time-to-first-token. Idempotente. */
   markFirstToken(): void;
-  end(result: {
-    output: string;
-    usage?: TokenUsage;
-    finishReason?: string;
-    /** Proveedor y modelo que atendieron, si la cadena cayo a un respaldo. */
-    model?: string;
-    vendor?: string;
-  }): void;
-  fail(error: unknown): void;
+  end(
+    result: ServedBy & {
+      output: string;
+      usage?: TokenUsage;
+      finishReason?: string;
+    },
+  ): void;
+  fail(
+    error: unknown,
+    context?: ServedBy & {
+      /** WARNING cuando no es un fallo del sistema (respuesta vacia). */
+      level?: "WARNING" | "ERROR";
+      /** Lo que se llego a emitir antes del fallo. */
+      output?: string;
+    },
+  ): void;
 }
 
 export interface Observability {
@@ -65,7 +87,15 @@ export interface Observability {
     /** Prompt que se ha usado, para enlazar la generacion con su version. */
     prompt: ResolvedPrompt;
   }): GenerationHandle;
-  /** Vacia la cola de eventos. Llamar SIEMPRE antes de cerrar el stream. */
+  /**
+   * Registra la valoracion del usuario sobre una respuesta. Es lo que cierra
+   * el circulo: Langfuse agrega los scores por version del prompt.
+   */
+  score(input: { traceId: string; value: FeedbackValue }): void;
+  /**
+   * Vacia la cola de eventos. Imprescindible antes de que la plataforma
+   * congele el proceso: con after() tras la respuesta, o en linea si no hay.
+   */
   flush(): Promise<void>;
 }
 
@@ -79,8 +109,16 @@ const NOOP_GENERATION: GenerationHandle = {
 const NOOP_OBSERVABILITY: Observability = {
   enabled: false,
   startGeneration: () => NOOP_GENERATION,
+  score() {},
   flush: async () => {},
 };
+
+/** El modelo solo se corrige si no es el previsto: ver end(). */
+const servedModel = (model: string | undefined, planned: string) =>
+  model && model !== planned ? { model } : {};
+
+const failoverMetadata = (failovers: FailoverRecord[] | undefined) =>
+  failovers?.length ? { failovers } : {};
 
 /**
  * Cliente cacheado a nivel de modulo. En serverless el modulo sobrevive entre
@@ -183,14 +221,14 @@ export async function getObservability(): Promise<Observability> {
             firstTokenAt = new Date();
           },
 
-          end({ output, usage, finishReason, model, vendor }) {
+          end({ output, usage, finishReason, model, vendor, failovers }) {
             try {
               generation.end({
                 output,
                 // Si la cadena cayo a un respaldo, corregimos el modelo: de lo
                 // contrario Langfuse calcularia el coste con la tarifa del
                 // proveedor equivocado.
-                ...(model && model !== input.model ? { model } : {}),
+                ...servedModel(model, input.model),
                 // completionStartTime es lo que Langfuse usa para calcular el
                 // time-to-first-token, la metrica que de verdad percibe el
                 // usuario en un chat con streaming.
@@ -200,7 +238,14 @@ export async function getObservability(): Promise<Observability> {
                   output: usage.output ?? 0,
                   total: usage.total ?? 0,
                 },
-                metadata: { finishReason, servedBy: vendor ?? input.vendor },
+                metadata: {
+                  finishReason,
+                  servedBy: vendor ?? input.vendor,
+                  // Quien fallo antes de que alguien atendiera. Sin esto, un
+                  // proveedor principal que vive agotado pasa desapercibido:
+                  // la traza solo muestra al respaldo contestando bien.
+                  ...failoverMetadata(failovers),
+                },
               });
               trace.update({ output });
             } catch (error) {
@@ -208,14 +253,20 @@ export async function getObservability(): Promise<Observability> {
             }
           },
 
-          fail(error) {
+          fail(error, context = {}) {
             try {
               const message =
                 error instanceof Error ? error.message : String(error);
               generation.end({
-                level: "ERROR",
+                level: context.level ?? "ERROR",
                 statusMessage: message,
+                ...(context.output ? { output: context.output } : {}),
+                ...servedModel(context.model, input.model),
                 completionStartTime: firstTokenAt ?? undefined,
+                metadata: {
+                  servedBy: context.vendor ?? input.vendor,
+                  ...failoverMetadata(context.failovers),
+                },
               });
               trace.update({ metadata: { failed: true } });
             } catch (nested) {
@@ -226,6 +277,22 @@ export async function getObservability(): Promise<Observability> {
       } catch (error) {
         console.warn("[langfuse] no se pudo abrir la traza", error);
         return NOOP_GENERATION;
+      }
+    },
+
+    score({ traceId, value }) {
+      try {
+        client.score({
+          // Id estable por traza: si el usuario cambia de opinion, el voto
+          // nuevo sustituye al anterior en lugar de sumarse a el.
+          id: traceId + "-user-feedback",
+          traceId,
+          name: "user-feedback",
+          value,
+          dataType: "BOOLEAN",
+        });
+      } catch (error) {
+        console.warn("[langfuse] no se pudo registrar la valoracion", error);
       }
     },
 

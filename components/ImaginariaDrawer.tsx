@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { AnimatePresence, MotionConfig, motion } from "framer-motion";
 import { BackgroundShapes } from "@/components/BackgroundShapes";
 import { PaletaProvider } from "@/components/palette";
-import { ChatContainer } from "@/components/chat/ChatContainer";
+import { ChatContainer, CLOSE_MESSAGE } from "@/components/chat/ChatContainer";
 
 interface ImaginariaDrawerProps {
   /**
@@ -23,6 +23,11 @@ interface ImaginariaDrawerProps {
  *
  * El proyecto se despliega como aplicacion independiente y ademas se embebe
  * aqui, de modo que el visitante prueba la herramienta sin salir de la web.
+ *
+ * Es un <dialog> abierto con showModal(), no un div con role="dialog": el
+ * navegador deja inerte el resto de la página (ni el tabulador ni un lector
+ * de pantalla se escapan por detrás del panel) y convierte Escape en una
+ * petición de cierre. Al cerrarse, el foco vuelve al botón que lo abrió.
  */
 export function ImaginariaDrawer({
   src,
@@ -30,31 +35,94 @@ export function ImaginariaDrawer({
   side = "right",
 }: ImaginariaDrawerProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const titleId = useId();
 
-  // Escape para cerrar y bloqueo del scroll de fondo. Sin el bloqueo, el
-  // scroll del panel "atraviesa" y mueve la pagina que hay detras.
+  const close = () => setIsOpen(false);
+
+  // Modal en cuanto se monta, y el foco dentro, en "Cerrar". En un efecto de
+  // layout para ir antes que los efectos normales del chat: el autoFocus del
+  // campo, que solo actúa con teclado físico, necesita el diálogo ya abierto
+  // y se queda con el foco. En táctil se queda en "Cerrar".
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!isOpen || !dialog) return;
+    if (!dialog.open) dialog.showModal();
+    closeRef.current?.focus();
+  }, [isOpen]);
+
+  // Bloqueo del scroll de fondo. Sin él, el scroll del panel "atraviesa" y
+  // mueve la pagina que hay detras.
   useEffect(() => {
     if (!isOpen) return;
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setIsOpen(false);
-    };
-
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", onKeyDown);
-
     return () => {
       document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", onKeyDown);
     };
   }, [isOpen]);
 
+  // Con la app en un iframe, Escape se queda dentro de él: es la app la que
+  // pide el cierre con un mensaje. Solo se atiende si llega de nuestro iframe
+  // y desde el origen de src.
+  useEffect(() => {
+    if (!isOpen || !src) return;
+    const origin = new URL(src, window.location.href).origin;
+    const onMessage = (event: MessageEvent) => {
+      if (
+        event.origin === origin &&
+        event.source === iframeRef.current?.contentWindow &&
+        event.data?.type === CLOSE_MESSAGE
+      ) {
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [isOpen, src]);
+
+  // Terminada la salida, el foco vuelve al botón que abrió el panel; si no,
+  // cae al <body> y quien navega con teclado vuelve al principio de la
+  // página. close() primero: mientras el diálogo siga en la capa superior, el
+  // resto de la página está inerte y el botón no puede recibir el foco.
+  const restoreFocus = () => {
+    dialogRef.current?.close();
+    triggerRef.current?.focus();
+  };
+
   const offscreen = side === "right" ? "100%" : "-100%";
 
+  const closeButton = (
+    <button
+      ref={closeRef}
+      type="button"
+      onClick={close}
+      aria-label="Cerrar"
+      className="ml-1 flex size-7 items-center justify-center rounded-full text-im-faint transition-colors hover:text-im-text"
+    >
+      <svg
+        viewBox="0 0 24 24"
+        className="size-4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        aria-hidden
+      >
+        <path d="M18 6 6 18M6 6l12 12" />
+      </svg>
+    </button>
+  );
+
   return (
-    <>
+    // Como en la página: framer-motion respeta prefers-reduced-motion solo si
+    // se le pide. Con él, el panel aparece sin deslizarse.
+    <MotionConfig reducedMotion="user">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setIsOpen(true)}
         aria-haspopup="dialog"
@@ -68,74 +136,89 @@ export function ImaginariaDrawer({
         {label}
       </button>
 
-      <AnimatePresence>
+      <AnimatePresence onExitComplete={restoreFocus}>
         {isOpen && (
-          <>
+          <dialog
+            key="panel"
+            ref={dialogRef}
+            // Dentro del iframe el título no se puede referenciar desde aquí.
+            aria-labelledby={src ? undefined : titleId}
+            aria-label={src ? "ImaginarIA" : undefined}
+            // Escape: que se cierre con la animación de salida, no de golpe.
+            onCancel={(event) => {
+              event.preventDefault();
+              close();
+            }}
+            // Por si el navegador lo cierra sin dejar cancelar.
+            onClose={close}
+            // Transparente y a pantalla completa: el velo y el panel son
+            // hijos suyos, para poder animarlos.
+            className="fixed inset-0 m-0 size-full max-h-none max-w-none overflow-hidden bg-transparent p-0 text-im-text backdrop:bg-transparent"
+          >
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.25 }}
-              onClick={() => setIsOpen(false)}
-              className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm"
+              onClick={close}
+              className="absolute inset-0 bg-black/65 backdrop-blur-sm"
             />
 
-            <motion.aside
-              role="dialog"
-              aria-modal="true"
-              aria-label="ImaginarIA"
+            <motion.div
               initial={{ x: offscreen }}
               animate={{ x: 0 }}
               exit={{ x: offscreen }}
               transition={{ type: "spring", stiffness: 320, damping: 34 }}
-              className={`fixed inset-y-0 z-50 flex w-full max-w-[min(34rem,100vw)] flex-col border-im-border bg-im-bg shadow-2xl ${
+              className={`absolute inset-y-0 flex w-full max-w-[min(34rem,100vw)] flex-col border-im-border bg-im-bg shadow-2xl ${
                 side === "right" ? "right-0 border-l" : "left-0 border-r"
               }`}
             >
-              <button
-                type="button"
-                onClick={() => setIsOpen(false)}
-                aria-label="Cerrar"
-                className="absolute right-4 top-3.5 z-20 flex size-7 items-center justify-center rounded-full text-im-faint transition-colors hover:text-im-text"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  className="size-4"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  aria-hidden
-                >
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
-
               {src ? (
-                <iframe
-                  src={src}
-                  title="ImaginarIA"
-                  className="size-full border-0"
-                  // El iframe apunta a nuestro propio despliegue: le damos lo
-                  // justo para funcionar y nada mas.
-                  sandbox="allow-scripts allow-same-origin allow-forms"
-                />
+                <>
+                  {/* La cabecera de la app vive dentro del iframe y desde aquí
+                      no se le puede hacer sitio: "Cerrar" va en una barra
+                      propia, en vez de flotar encima de sus botones. */}
+                  <div className="flex shrink-0 justify-end border-b border-im-border px-4 py-2">
+                    {closeButton}
+                  </div>
+                  <iframe
+                    ref={iframeRef}
+                    src={src}
+                    title="ImaginarIA"
+                    className="min-h-0 w-full flex-1 border-0"
+                    // El iframe apunta a nuestro propio despliegue: le damos lo
+                    // justo para funcionar y nada mas. Las popups son para los
+                    // enlaces de las respuestas, que abren en pestana nueva;
+                    // sin ellas, pulsarlos no haria nada.
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                    // El boton de copiar respuesta, desde otro origen, necesita
+                    // permiso explicito para escribir en el portapapeles.
+                    allow="clipboard-write"
+                  />
+                </>
               ) : (
                 // Misma composicion que la pagina completa, para que el panel
-                // no parezca otra aplicacion: azul, figuras y cristal.
+                // no parezca otra aplicacion: azul, figuras y cristal. Sin el
+                // cristal, el texto quedaba directamente sobre el color de la
+                // paleta y las figuras (blanco sobre verde: 1.3:1).
                 <PaletaProvider>
-                  <div className="relative flex flex-1 overflow-hidden">
+                  <div className="relative flex flex-1 overflow-hidden p-3">
                     <BackgroundShapes />
-                    <div className="relative z-10 flex flex-1 flex-col">
-                      <ChatContainer autoFocus />
+                    <div className="im-glass relative z-10 flex flex-1 flex-col overflow-hidden rounded-im-lg">
+                      <ChatContainer
+                        autoFocus
+                        headingLevel={2}
+                        headingId={titleId}
+                        headerEnd={closeButton}
+                      />
                     </div>
                   </div>
                 </PaletaProvider>
               )}
-            </motion.aside>
-          </>
+            </motion.div>
+          </dialog>
         )}
       </AnimatePresence>
-    </>
+    </MotionConfig>
   );
 }

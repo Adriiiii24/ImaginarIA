@@ -26,11 +26,15 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: "#09090e",
-  // La interfaz ocupa el alto exacto de la ventana; sin esto, el teclado de
-  // iOS empuja el composer fuera de la pantalla.
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // Sin maximumScale: en Android bloqueaba el zoom (WCAG 1.4.4). El campo
+  // usa 16px, así que iOS tampoco hace zoom solo al enfocarlo.
+  //
+  // La interfaz ocupa el alto exacto de la ventana; con esto, al abrir el
+  // teclado virtual la ventana encoge (y h-dvh con ella) en lugar de taparla,
+  // y el composer se queda a la vista encima del teclado.
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
