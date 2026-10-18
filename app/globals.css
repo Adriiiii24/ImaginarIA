@@ -37,17 +37,22 @@
   --im-glass-border-strong: rgb(255 255 255 / 0.34);
   --im-glass-blur: 28px;
 
-  /* Texto */
+  /* Texto. El peor fondo no es el azul: es el cristal sobre el verde o el
+     amarillo (de fondo, o una figura que pase por detras). Ahi, al 0.45 de
+     antes, faint daba 3.0:1. Al 0.68 da 4.8:1 en escritorio y 6.3:1 en
+     movil, donde el cristal es mas opaco. */
   --im-text: #ffffff;
   --im-text-muted: rgb(255 255 255 / 0.72);
-  --im-text-faint: rgb(255 255 255 / 0.45);
+  --im-text-faint: rgb(255 255 255 / 0.68);
 
   /* Acento: el amarillo de la paleta, el unico que aguanta como accion */
   --im-accent: #f4de5e;
   --im-accent-ink: #0007ff;
 
-  /* Error: el coral puro no llega a contraste, asi que se aclara */
-  --im-danger: #ffb4b4;
+  /* Error: el coral puro no llega a contraste, asi que se aclara. Sobre el
+     tinte del aviso y el cristal en verde o amarillo, #ffb4b4 se quedaba en
+     4.1:1; este da 4.8:1. */
+  --im-danger: #ffd0d0;
 
   /* Comic: los bocadillos y los controles son papel con trazo grueso. Al
      vivir sobre papel claro, aqui el texto es tinta y no blanco. */
@@ -97,6 +102,30 @@ body {
   transition: background-color 1100ms cubic-bezier(0.65, 0, 0.35, 1);
   color: var(--im-text);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* --------------------------------------------------------------------------
+   Foco
+   -------------------------------------------------------------------------- */
+
+/* Anillo propio y no el del navegador: el azul de Firefox se quedaba en 3:1
+   sobre el cristal azul. El amarillo da 6:1 sobre el cristal con cualquier
+   color de la paleta, y el desplazamiento lo separa del trazo de tinta de los
+   botones de papel.
+
+   Va en la capa base para que una utilidad pueda sustituirlo: el campo del
+   mensaje lo anula (lo señala su contenedor) y el botón de enviar, que vive
+   sobre papel, le cambia el color. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--im-accent);
+    outline-offset: 2px;
+  }
+}
+
+/* Sobre papel el amarillo desaparece (1.3:1); el azul de tinta da 8.3:1. */
+.im-prose :focus-visible {
+  outline-color: var(--im-ink-accent);
 }
 
 /* --------------------------------------------------------------------------
@@ -252,13 +281,14 @@ body {
 }
 
 /* Los controles se hunden al pulsarlos: el elemento avanza justo lo que mide
-   la sombra, de modo que parece que lo aplastas contra el papel. */
+   la sombra, de modo que parece que lo aplastas contra el papel. Los inactivos
+   no, tampoco los que lo están por ARIA (enviar sin texto: ver ChatInput). */
 .im-comic-press {
   transition:
     transform 90ms ease-out,
     box-shadow 90ms ease-out;
 }
-.im-comic-press:active:not(:disabled) {
+.im-comic-press:active:not(:disabled, [aria-disabled="true"]) {
   transform: translate(4px, 4px);
   box-shadow: 0 0 0 0 var(--im-ink);
 }
@@ -417,10 +447,55 @@ body {
   padding-left: 0.9rem;
   color: var(--im-ink-muted);
 }
+/* Los encabezados de una respuesta llegan ya bajados de nivel (ver
+   MessageBubble): aquí solo se distinguen del párrafo, sin gritar. */
+.im-prose :is(h3, h4, h5, h6) {
+  font-weight: 700;
+  line-height: 1.35;
+}
+.im-prose h3 {
+  font-size: 1.0625em;
+}
+/* Tabla: se desplaza dentro de su marco en vez de ensanchar el bocadillo. */
+.im-prose-table {
+  overflow-x: auto;
+  border: 1px solid rgb(11 11 20 / 0.18);
+  border-radius: var(--im-radius-sm);
+}
+.im-prose-table table {
+  /* Al menos el ancho del marco, para que la cabecera no se corte a medias. */
+  min-width: 100%;
+  border-collapse: collapse;
+  /* El bocadillo parte las palabras por cualquier letra ('anywhere'); en una
+     celda eso deja columnas de una sílaba. Aquí se corta por los espacios, y
+     lo que no quepa se desplaza. */
+  overflow-wrap: normal;
+}
+.im-prose-table :is(th, td) {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid rgb(11 11 20 / 0.12);
+}
+.im-prose-table th {
+  font-weight: 600;
+  background: rgb(11 11 20 / 0.06);
+}
+.im-prose-table tr:last-child td {
+  border-bottom: 0;
+}
 
 /* --------------------------------------------------------------------------
    Movimiento reducido
    -------------------------------------------------------------------------- */
+
+/* Pausa pedida con el botón de la cabecera (WCAG 2.2.2): las figuras se
+   quedan donde estén, en vez de saltar a su posición de partida, y el cursor
+   de escritura deja de parpadear. */
+:root[data-im-animacion="en-pausa"] .im-shape {
+  animation-play-state: paused;
+}
+:root[data-im-animacion="en-pausa"] .im-prose--streaming ::after {
+  animation: none;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .im-shape,

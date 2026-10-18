@@ -12,23 +12,55 @@ interface MessageBubbleProps {
   isStreaming?: boolean;
   /** Sin él no se ofrece valorar. Debe ser estable: ver useImaginaria.rate. */
   onFeedback?: (message: ChatMessage, value: FeedbackValue) => void;
+  /**
+   * Avisos para el lector de pantalla ("Copiado" o el fallo), que los dice la
+   * región compartida del chat. Debe ser estable, por el mismo motivo.
+   */
+  onAnnounce?: (text: string) => void;
 }
 
 // Fuera del componente: react-markdown no necesita recrearlos en cada token.
 const REMARK_PLUGINS = [remarkGfm];
 
+const COPY_FAILED = "No he podido copiar la respuesta.";
+
 const MARKDOWN_COMPONENTS: Components = {
   // Sin persistencia, un enlace que navega en la misma pestaña se lleva la
-  // conversación por delante. Siempre en una nueva.
+  // conversación por delante. Siempre en una nueva, y dicho: quien no ve
+  // abrirse la pestaña se encuentra de pronto en otra página.
   a: ({ href, title, children }) => (
     <a href={href} title={title} target="_blank" rel="noopener noreferrer">
       {children}
+      <span className="sr-only"> (se abre en una pestaña nueva)</span>
     </a>
   ),
   // Una imagen en la respuesta cargaría una URL que ha escrito el modelo:
   // nada que aporte a una lluvia de ideas y una vía de fuga de datos si
   // alguien le inyecta instrucciones. Queda su texto alternativo.
   img: ({ alt }) => (alt ? <span>{alt}</span> : null),
+  // Los encabezados de una respuesta cuelgan del título de la página en vez
+  // de competir con él: un "# Ideas" del modelo sería un segundo h1. Bajan
+  // dos niveles.
+  h1: ({ children }) => <h3>{children}</h3>,
+  h2: ({ children }) => <h4>{children}</h4>,
+  h3: ({ children }) => <h5>{children}</h5>,
+  h4: ({ children }) => <h6>{children}</h6>,
+  h5: ({ children }) => <h6>{children}</h6>,
+  h6: ({ children }) => <h6>{children}</h6>,
+  // Una tabla ancha se desplaza dentro de su marco, y el marco recibe el
+  // foco: sin él, con teclado, lo que queda a la derecha no se ve nunca.
+  table: ({ children }) => (
+    <div
+      role="region"
+      tabIndex={0}
+      aria-label="Tabla"
+      className="im-prose-table"
+    >
+      <table>{children}</table>
+    </div>
+  ),
+  // Lo mismo para el código, que se desplaza en horizontal (.im-prose pre).
+  pre: ({ children }) => <pre tabIndex={0}>{children}</pre>,
 };
 
 /**
@@ -47,6 +79,7 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   isStreaming,
   onFeedback,
+  onAnnounce,
 }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const showActions = !isUser && !isStreaming && message.content !== "";
@@ -64,6 +97,9 @@ export const MessageBubble = memo(function MessageBubble({
       {isUser ? (
         // pre-wrap: los saltos de línea con Shift+Enter son parte del mensaje.
         <div className="im-comic im-bubble im-bubble--right im-bubble--user max-w-[85%] whitespace-pre-wrap rounded-im px-4 py-2.5 text-[0.9375rem] font-medium leading-relaxed">
+          {/* Quién habla lo dicen el color y el lado, que un lector de
+              pantalla no ve. Las respuestas ya llevan la firma escrita. */}
+          <span className="sr-only">Tú: </span>
           {message.content}
         </div>
       ) : (
@@ -76,7 +112,11 @@ export const MessageBubble = memo(function MessageBubble({
             </span>
 
             {showActions && (
-              <MessageActions message={message} onFeedback={onFeedback} />
+              <MessageActions
+                message={message}
+                onFeedback={onFeedback}
+                onAnnounce={onAnnounce}
+              />
             )}
           </div>
 
@@ -108,7 +148,8 @@ export const MessageBubble = memo(function MessageBubble({
 function MessageActions({
   message,
   onFeedback,
-}: Pick<MessageBubbleProps, "message" | "onFeedback">) {
+  onAnnounce,
+}: Pick<MessageBubbleProps, "message" | "onFeedback" | "onAnnounce">) {
   // Valorar solo tiene sentido si hay una traza a la que enlazar el voto.
   const canRate = Boolean(message.traceId && onFeedback);
 
@@ -119,7 +160,7 @@ function MessageActions({
       transition={{ duration: 0.25 }}
       className="-my-1 ml-auto flex items-center gap-0.5"
     >
-      <CopyButton text={message.content} />
+      <CopyButton text={message.content} onAnnounce={onAnnounce} />
       {canRate && (
         <>
           <ActionButton
@@ -142,22 +183,35 @@ function MessageActions({
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({
+  text,
+  onAnnounce,
+}: {
+  text: string;
+  onAnnounce?: (text: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   return (
     <ActionButton
-      label={copied ? "Copiado" : "Copiar respuesta"}
+      // La etiqueta no cambia: "Copiado" lo anuncia la región compartida del
+      // chat, y cambiarla a la vez haría oírlo dos veces.
+      label="Copiar respuesta"
       onClick={() => {
-        navigator.clipboard
-          ?.writeText(text)
+        const copying = navigator.clipboard?.writeText(text);
+        // Sin portapapeles (página sin HTTPS) o sin permiso (un iframe sin
+        // clipboard-write): no hay nada que hacer, pero se dice.
+        if (!copying) {
+          onAnnounce?.(COPY_FAILED);
+          return;
+        }
+        copying
           .then(() => {
             setCopied(true);
+            onAnnounce?.("Copiado");
             setTimeout(() => setCopied(false), 1_600);
           })
-          // Sin permiso (un iframe sin clipboard-write): no hay nada que
-          // hacer, y el botón simplemente no confirma.
-          .catch(() => {});
+          .catch(() => onAnnounce?.(COPY_FAILED));
       }}
     >
       {copied ? (

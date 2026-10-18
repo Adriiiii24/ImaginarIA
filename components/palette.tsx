@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
@@ -57,11 +58,85 @@ const fondoEnPaso = (paso: number): string =>
 const figuraEnPaso = (indiceFigura: number, paso: number): string =>
   paso !== 0 && RECORRIDO[paso - 1] === indiceFigura ? AZUL : BASE[indiceFigura];
 
+/* -------------------------------------------------------------------------- */
+/* Pausa de las figuras                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Las figuras flotan en bucle durante toda la visita, a la vez que el chat:
+ * WCAG 2.2.2 pide poder pararlas desde la propia página, sin depender de la
+ * preferencia del sistema. La elección se recuerda entre visitas.
+ *
+ * El estado vive fuera de React, como la muestra de sugerencias: el servidor
+ * pinta siempre "en marcha" y el cliente pasa a lo guardado al hidratar, sin
+ * setState dentro de un efecto. Y vive en memoria además de en localStorage:
+ * si el navegador lo bloquea (modo privado estricto, iframe sin permisos), el
+ * botón sigue funcionando durante la visita aunque no se recuerde.
+ */
+const CLAVE_PAUSA = "imaginaria:animacion-en-pausa";
+
+let enPausaActual: boolean | null = null; // null: aún sin leer
+const oyentesPausa = new Set<() => void>();
+
+const leerPausa = (): boolean => {
+  if (enPausaActual === null) {
+    try {
+      enPausaActual = localStorage.getItem(CLAVE_PAUSA) === "1";
+    } catch {
+      enPausaActual = false;
+    }
+  }
+  return enPausaActual;
+};
+
+const guardarPausa = (enPausa: boolean) => {
+  enPausaActual = enPausa;
+  try {
+    if (enPausa) localStorage.setItem(CLAVE_PAUSA, "1");
+    else localStorage.removeItem(CLAVE_PAUSA);
+  } catch {
+    // Sin almacenamiento: vale para esta visita y no se recuerda.
+  }
+  oyentesPausa.forEach((oyente) => oyente());
+};
+
+const suscribirPausa = (oyente: () => void) => {
+  oyentesPausa.add(oyente);
+  return () => {
+    oyentesPausa.delete(oyente);
+  };
+};
+
+/** Con prefers-reduced-motion el CSS ya tiene las figuras quietas. */
+const CONSULTA_MOVIMIENTO = "(prefers-reduced-motion: reduce)";
+
+const leerMovimientoReducido = () =>
+  window.matchMedia(CONSULTA_MOVIMIENTO).matches;
+
+const suscribirMovimientoReducido = (oyente: () => void) => {
+  const consulta = window.matchMedia(CONSULTA_MOVIMIENTO);
+  consulta.addEventListener("change", oyente);
+  return () => consulta.removeEventListener("change", oyente);
+};
+
+/** Instantánea del servidor para los dos: ni en pausa ni reducido. */
+const nunca = () => false;
+
+/* -------------------------------------------------------------------------- */
+
 interface PaletaContextValue {
   paso: number;
   /** Color al que pasará el fondo en la siguiente pulsación. */
   siguienteColor: string;
   girar: () => void;
+  /** Las figuras están en pausa porque así lo ha pedido quien mira. */
+  enPausa: boolean;
+  alternarPausa: () => void;
+  /**
+   * prefers-reduced-motion activo: las figuras ya están quietas, no hay nada
+   * que pausar ni reanudar y el botón no debe aparecer (diría que se mueven).
+   */
+  movimientoReducido: boolean;
 }
 
 const PaletaContext = createContext<PaletaContextValue | null>(null);
@@ -76,6 +151,12 @@ export function usePaleta(): PaletaContextValue | null {
 
 export function PaletaProvider({ children }: { children: ReactNode }) {
   const [paso, setPaso] = useState(0);
+  const enPausa = useSyncExternalStore(suscribirPausa, leerPausa, nunca);
+  const movimientoReducido = useSyncExternalStore(
+    suscribirMovimientoReducido,
+    leerMovimientoReducido,
+    nunca,
+  );
 
   // Las variables se escriben en <html> y no en un contenedor porque el fondo
   // de la página lo pinta <body>: si se quedaran en un div interior, el color
@@ -91,6 +172,14 @@ export function PaletaProvider({ children }: { children: ReactNode }) {
     });
   }, [paso]);
 
+  // La pausa, también en <html>: las figuras son CSS puro (BackgroundShapes es
+  // un componente de servidor) y es el CSS el que las detiene.
+  useEffect(() => {
+    const raiz = document.documentElement;
+    if (enPausa) raiz.dataset.imAnimacion = "en-pausa";
+    else delete raiz.dataset.imAnimacion;
+  }, [enPausa]);
+
   // Al desmontar se devuelven los valores de la hoja de estilos, para no dejar
   // estilos en línea pegados a <html> si el widget se cierra.
   useEffect(() => {
@@ -100,6 +189,7 @@ export function PaletaProvider({ children }: { children: ReactNode }) {
       BASE.forEach((_, indice) =>
         raiz.style.removeProperty("--im-shape-" + (indice + 1)),
       );
+      delete raiz.dataset.imAnimacion;
     };
   }, []);
 
@@ -108,12 +198,17 @@ export function PaletaProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const alternarPausa = useCallback(() => guardarPausa(!leerPausa()), []);
+
   return (
     <PaletaContext.Provider
       value={{
         paso,
         siguienteColor: fondoEnPaso((paso + 1) % TOTAL_PASOS),
         girar,
+        enPausa,
+        alternarPausa,
+        movimientoReducido,
       }}
     >
       {children}
